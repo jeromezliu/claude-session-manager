@@ -22,6 +22,7 @@ struct ContentView: View {
         .searchable(text: $store.searchText, placement: .sidebar, prompt: "Search sessions")
         .toolbar { toolbarContent }
         .onChange(of: store.groups.count) { _ in autoSelectForSnapshot() }
+        .onAppear { maybeTerminalSnapshot() }
         .sheet(item: $renameTarget) { target in
             RenameSheet(session: target) { newTitle in
                 store.rename(target, to: newTitle)
@@ -282,7 +283,8 @@ struct ContentView: View {
 
     @ViewBuilder
     private func rowMenu(_ session: SessionSummary) -> some View {
-        Button("Continue in Claude") { store.continueSession(session) }
+        Button("Continue in Terminal") { store.continueSession(session) }
+        Button("Open in Terminal.app") { store.openInExternalTerminal(session) }
         Button("Rename…") { renameTarget = session }
         Divider()
         Button("Reveal in Finder") { SessionActions.revealInFinder(session) }
@@ -353,6 +355,22 @@ struct ContentView: View {
         guard ProcessInfo.processInfo.environment["CSM_SNAPSHOT"] != nil else { return }
         guard selectedSession == nil, let session = store.groups.first?.sessions.first else { return }
         selectedSession = session.id
+    }
+
+    /// Dev-only: open a terminal for the first session and snapshot that window.
+    private func maybeTerminalSnapshot() {
+        guard let path = ProcessInfo.processInfo.environment["CSM_SNAPSHOT_TERM"], !path.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            if let session = store.groups.first?.sessions.first {
+                store.continueSession(session)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                SelfSnapshot.captureKeyWindow(to: URL(fileURLWithPath: path))
+                if ProcessInfo.processInfo.environment["CSM_SNAPSHOT_QUIT"] == "1" {
+                    NSApp.terminate(nil)
+                }
+            }
+        }
     }
 
     private func chooseRoot() {

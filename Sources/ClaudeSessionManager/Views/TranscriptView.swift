@@ -76,7 +76,7 @@ struct TranscriptView: View {
                 Label("Continue", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent)
-            .help("Resume in Claude Code")
+            .help("Resume this session in an internal terminal")
         case .trashed:
             HStack(spacing: 8) {
                 Button(action: onRecover) {

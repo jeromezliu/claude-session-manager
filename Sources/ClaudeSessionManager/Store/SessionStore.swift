@@ -192,7 +192,13 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Resume the session in an internal terminal window (SwiftTerm-backed).
     func continueSession(_ session: SessionSummary) {
+        TerminalManager.shared.open(session)
+    }
+
+    /// Resume the session in the external Terminal.app instead.
+    func openInExternalTerminal(_ session: SessionSummary) {
         do { try SessionActions.continueInClaude(session) }
         catch { errorMessage = error.localizedDescription }
     }

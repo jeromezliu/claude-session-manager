@@ -23,8 +23,12 @@ but a genuinely native Mac app rather than a web viewer.
   Trash tab you can preview a deleted session's transcript, **Recover** it back
   to its original location, **Delete Permanently** (single), or **Empty Trash**.
   Each trashed file keeps a `.meta` sidecar recording where it came from.
-- **Continue** — resumes the session in Claude Code by opening a new Terminal
-  window at the session's `cwd` and running `claude --resume <id>`.
+- **Continue (internal terminal)** — resumes the session in an **in-app
+  terminal window** (powered by [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm)):
+  a real PTY-backed login shell opens in the session's `cwd` and
+  `claude --resume <id>` is typed for you. One window per session; re-opening
+  focuses the existing one. "Open in Terminal.app" is still available (context
+  menu) to use the external Terminal instead.
 - **Configurable scan folder** — defaults to `~/.claude/projects`; point it at
   any folder and it finds every `.jsonl` beneath it. The choice is remembered.
 - **Hides temp sessions** — throwaway sessions that tools spawn in the system
