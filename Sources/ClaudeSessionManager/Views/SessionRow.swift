@@ -2,37 +2,89 @@ import SwiftUI
 
 struct SessionRow: View {
     let session: SessionSummary
+    // Observe the manager directly so the indicator appears/disappears even when
+    // the AppKit-backed sidebar List reuses this (otherwise unchanged) row.
+    @ObservedObject private var terminals = TerminalManager.shared
+
+    private var activity: TerminalActivity? {
+        terminals.session(for: session.id)?.activity
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(session.title)
-                .font(.body.weight(.medium))
-                .lineLimit(2)
-
-            if let prompt = session.firstPrompt, prompt != session.title {
-                Text(prompt)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            HStack(spacing: 8) {
-                Label("\(session.messageCount)", systemImage: "bubble.left.and.bubble.right")
-                if let branch = session.gitBranch, branch != "HEAD" {
-                    Label(branch, systemImage: "arrow.triangle.branch").lineLimit(1)
+        HStack(alignment: .top, spacing: 6) {
+            // Fixed-width gutter so every row's text aligns, dot or not.
+            ZStack {
+                if let activity {
+                    ActivityDot(activity: activity)
                 }
-                if session.totalOutputTokens > 0 {
-                    Label(Fmt.tokens(session.totalOutputTokens), systemImage: "cpu")
-                }
-                Spacer()
-                Text(Fmt.relative(session.modifiedAt))
             }
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .labelStyle(.titleAndIcon)
+            .frame(width: 8)
+            .padding(.top, 5)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(session.title)
+                    .font(.body.weight(.medium))
+                    .lineLimit(2)
+
+                if let prompt = session.firstPrompt, prompt != session.title {
+                    Text(prompt)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 8) {
+                    Label("\(session.messageCount)", systemImage: "bubble.left.and.bubble.right")
+                    if let branch = session.gitBranch, branch != "HEAD" {
+                        Label(branch, systemImage: "arrow.triangle.branch").lineLimit(1)
+                    }
+                    if session.totalOutputTokens > 0 {
+                        Label(Fmt.tokens(session.totalOutputTokens), systemImage: "cpu")
+                    }
+                    Spacer()
+                    Text(Fmt.relative(session.modifiedAt))
+                }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .labelStyle(.titleAndIcon)
+            }
         }
         .padding(.vertical, 3)
         .help("Last modified \(Fmt.full(session.modifiedAt))")
+    }
+}
+
+/// Per-session terminal indicator: a solid green dot while a terminal runs,
+/// pulsing while Claude is actively producing output.
+struct ActivityDot: View {
+    @ObservedObject var activity: TerminalActivity
+    @State private var pulse = false
+
+    var body: some View {
+        Group {
+            if activity.isRunning {
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 7, height: 7)
+                    .scaleEffect(pulse ? 1.25 : 1.0)
+                    .opacity(pulse ? 0.3 : 1.0)
+                    .shadow(color: .green.opacity(pulse ? 0.9 : 0.0), radius: pulse ? 3.5 : 0)
+                    .help(activity.isWorking ? "Claude is working" : "Terminal running")
+            }
+        }
+        .onAppear { updatePulse(activity.isWorking) }
+        .onChange(of: activity.isWorking) { updatePulse($0) }
+        .onChange(of: activity.isRunning) { _ in updatePulse(activity.isWorking) }
+    }
+
+    private func updatePulse(_ working: Bool) {
+        if working {
+            withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        } else {
+            withAnimation(.easeOut(duration: 0.2)) { pulse = false }
+        }
     }
 }
 

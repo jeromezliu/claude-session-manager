@@ -12,6 +12,7 @@ struct TranscriptView: View {
 
     @State private var events: [TranscriptEvent] = []
     @State private var loading = true
+    @State private var watcher: FileWatcher?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,7 +39,14 @@ struct TranscriptView: View {
             }
         }
         .navigationTitle(session.title)
-        .task(id: session.id) { await load() }
+        .task(id: session.id) {
+            await load()
+            // Live-reload as the file grows (e.g. while resumed in the terminal).
+            watcher = FileWatcher(url: session.fileURL) {
+                Task { await reload() }
+            }
+        }
+        .onDisappear { watcher = nil }
     }
 
     private var header: some View {
@@ -76,7 +84,7 @@ struct TranscriptView: View {
                 Label("Continue", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent)
-            .help("Resume in Claude Code")
+            .help("Resume this session in an internal terminal")
         case .trashed:
             HStack(spacing: 8) {
                 Button(action: onRecover) {
@@ -114,6 +122,15 @@ struct TranscriptView: View {
         }.value
         events = parsed
         loading = false
+    }
+
+    /// Silent re-parse (no spinner) used when the file changes on disk.
+    private func reload() async {
+        let url = session.fileURL
+        let parsed = await Task.detached(priority: .userInitiated) {
+            SessionParser.transcript(for: url)
+        }.value
+        events = parsed
     }
 }
 

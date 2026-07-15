@@ -18,9 +18,21 @@ enum SelfSnapshot {
         }
     }
 
+    /// Capture the current key window (e.g. an in-app terminal window).
+    static func captureKeyWindow(to url: URL) {
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
+            ?? NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })
+        guard let window else { return }
+        captureWindow(window, to: url)
+    }
+
     private static func capture(to url: URL) {
-        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }),
-              let view = window.contentView else { return }
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }) else { return }
+        captureWindow(window, to: url)
+    }
+
+    private static func captureWindow(_ window: NSWindow, to url: URL) {
+        guard let view = window.contentView else { return }
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0,
               let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { return }

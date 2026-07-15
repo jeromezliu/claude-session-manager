@@ -3,6 +3,7 @@ import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var store: SessionStore
+    @ObservedObject private var terminals = TerminalManager.shared
 
     @State private var selectedSession: SessionSummary.ID?
     @State private var selectedTrash: TrashEntry.ID?
@@ -22,6 +23,7 @@ struct ContentView: View {
         .searchable(text: $store.searchText, placement: .sidebar, prompt: "Search sessions")
         .toolbar { toolbarContent }
         .onChange(of: store.groups.count) { _ in autoSelectForSnapshot() }
+        .onAppear { maybeTerminalSnapshot() }
         .sheet(item: $renameTarget) { target in
             RenameSheet(session: target) { newTitle in
                 store.rename(target, to: newTitle)
@@ -253,8 +255,19 @@ struct ContentView: View {
         switch store.viewMode {
         case .sessions:
             if let session = selectedSummary {
-                TranscriptView(session: session, mode: .active,
-                               onContinue: { store.continueSession(session) })
+                let terminal = terminals.session(for: session.id)
+                if let terminal, !terminal.isPoppedOut {
+                    VSplitView {
+                        TranscriptView(session: session, mode: .active,
+                                       onContinue: { store.continueSession(session) })
+                            .frame(minHeight: 180)
+                        TerminalPaneView(session: terminal)
+                            .frame(minHeight: 140)
+                    }
+                } else {
+                    TranscriptView(session: session, mode: .active,
+                                   onContinue: { store.continueSession(session) })
+                }
             } else {
                 ContentUnavailableView_Compat(
                     title: "No session selected",
@@ -282,7 +295,8 @@ struct ContentView: View {
 
     @ViewBuilder
     private func rowMenu(_ session: SessionSummary) -> some View {
-        Button("Continue in Claude") { store.continueSession(session) }
+        Button("Continue in Terminal") { store.continueSession(session) }
+        Button("Open in Terminal.app") { store.openInExternalTerminal(session) }
         Button("Rename…") { renameTarget = session }
         Divider()
         Button("Reveal in Finder") { SessionActions.revealInFinder(session) }
@@ -353,6 +367,34 @@ struct ContentView: View {
         guard ProcessInfo.processInfo.environment["CSM_SNAPSHOT"] != nil else { return }
         guard selectedSession == nil, let session = store.groups.first?.sessions.first else { return }
         selectedSession = session.id
+    }
+
+    /// Dev-only: open a terminal for the first session and snapshot that window.
+    private func maybeTerminalSnapshot() {
+        guard let path = ProcessInfo.processInfo.environment["CSM_SNAPSHOT_TERM"], !path.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            if let session = store.groups.first?.sessions.first {
+                selectedSession = session.id
+                store.continueSession(session)
+            }
+            if ProcessInfo.processInfo.environment["CSM_TERM_POPOUT"] == "1",
+               let s = store.groups.first?.sessions.first {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    terminals.session(for: s.id)?.popOut()
+                    if ProcessInfo.processInfo.environment["CSM_TERM_POPIN"] == "1" {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            terminals.session(for: s.id)?.popIn()
+                        }
+                    }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                SelfSnapshot.captureKeyWindow(to: URL(fileURLWithPath: path))
+                if ProcessInfo.processInfo.environment["CSM_SNAPSHOT_QUIT"] == "1" {
+                    NSApp.terminate(nil)
+                }
+            }
+        }
     }
 
     private func chooseRoot() {
