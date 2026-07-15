@@ -11,37 +11,43 @@ struct SessionRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
+        HStack(alignment: .top, spacing: 6) {
+            // Fixed-width gutter so every row's text aligns, dot or not.
+            ZStack {
                 if let activity {
                     ActivityDot(activity: activity)
                 }
+            }
+            .frame(width: 8)
+            .padding(.top, 5)
+
+            VStack(alignment: .leading, spacing: 4) {
                 Text(session.title)
                     .font(.body.weight(.medium))
                     .lineLimit(2)
-            }
 
-            if let prompt = session.firstPrompt, prompt != session.title {
-                Text(prompt)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+                if let prompt = session.firstPrompt, prompt != session.title {
+                    Text(prompt)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
 
-            HStack(spacing: 8) {
-                Label("\(session.messageCount)", systemImage: "bubble.left.and.bubble.right")
-                if let branch = session.gitBranch, branch != "HEAD" {
-                    Label(branch, systemImage: "arrow.triangle.branch").lineLimit(1)
+                HStack(spacing: 8) {
+                    Label("\(session.messageCount)", systemImage: "bubble.left.and.bubble.right")
+                    if let branch = session.gitBranch, branch != "HEAD" {
+                        Label(branch, systemImage: "arrow.triangle.branch").lineLimit(1)
+                    }
+                    if session.totalOutputTokens > 0 {
+                        Label(Fmt.tokens(session.totalOutputTokens), systemImage: "cpu")
+                    }
+                    Spacer()
+                    Text(Fmt.relative(session.modifiedAt))
                 }
-                if session.totalOutputTokens > 0 {
-                    Label(Fmt.tokens(session.totalOutputTokens), systemImage: "cpu")
-                }
-                Spacer()
-                Text(Fmt.relative(session.modifiedAt))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .labelStyle(.titleAndIcon)
             }
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .labelStyle(.titleAndIcon)
         }
         .padding(.vertical, 3)
         .help("Last modified \(Fmt.full(session.modifiedAt))")
@@ -52,7 +58,7 @@ struct SessionRow: View {
 /// pulsing while Claude is actively producing output.
 struct ActivityDot: View {
     @ObservedObject var activity: TerminalActivity
-    @State private var animate = false
+    @State private var bounce = false
 
     var body: some View {
         Group {
@@ -60,16 +66,22 @@ struct ActivityDot: View {
                 Circle()
                     .fill(Color.green)
                     .frame(width: 7, height: 7)
-                    .scaleEffect(activity.isWorking && animate ? 1.35 : 1.0)
-                    .opacity(activity.isWorking && animate ? 0.4 : 1.0)
-                    .animation(activity.isWorking
-                               ? .easeInOut(duration: 0.55).repeatForever(autoreverses: true)
-                               : .easeOut(duration: 0.2),
-                               value: animate)
-                    .animation(.easeInOut(duration: 0.2), value: activity.isWorking)
-                    .onAppear { animate = true }
+                    .offset(y: bounce ? -4 : 0)
                     .help(activity.isWorking ? "Claude is working" : "Terminal running")
             }
+        }
+        .onAppear { updateBounce(activity.isWorking) }
+        .onChange(of: activity.isWorking) { updateBounce($0) }
+        .onChange(of: activity.isRunning) { _ in updateBounce(activity.isWorking) }
+    }
+
+    private func updateBounce(_ working: Bool) {
+        if working {
+            withAnimation(.easeInOut(duration: 0.36).repeatForever(autoreverses: true)) {
+                bounce = true
+            }
+        } else {
+            withAnimation(.easeOut(duration: 0.15)) { bounce = false }
         }
     }
 }
