@@ -66,7 +66,7 @@ struct ActivityDot: View {
                 Circle()
                     .fill(Color.green)
                     .frame(width: 7, height: 7)
-                    .scaleEffect(pulse ? 1.45 : 1.0)
+                    .scaleEffect(pulse ? 1.25 : 1.0)
                     .opacity(pulse ? 0.3 : 1.0)
                     .shadow(color: .green.opacity(pulse ? 0.9 : 0.0), radius: pulse ? 3.5 : 0)
                     .help(activity.isWorking ? "Claude is working" : "Terminal running")
