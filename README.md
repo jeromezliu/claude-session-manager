@@ -24,11 +24,13 @@ but a genuinely native Mac app rather than a web viewer.
   to its original location, **Delete Permanently** (single), or **Empty Trash**.
   Each trashed file keeps a `.meta` sidecar recording where it came from.
 - **Continue (internal terminal)** — resumes the session in an **in-app
-  terminal window** (powered by [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm)):
+  terminal** (powered by [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm)):
   a real PTY-backed login shell opens in the session's `cwd` and
-  `claude --resume <id>` is typed for you. One window per session; re-opening
-  focuses the existing one. "Open in Terminal.app" is still available (context
-  menu) to use the external Terminal instead.
+  `claude --resume <id>` is typed for you. It appears **embedded below the
+  transcript** in a draggable split. The pane's ⧉ button **pops it out** into a
+  floating window (the process keeps running); the window's **Embed** button
+  docks it back. ✕ closes it. One terminal per session. "Open in Terminal.app"
+  is still available (context menu) to use the external Terminal instead.
 - **Configurable scan folder** — defaults to `~/.claude/projects`; point it at
   any folder and it finds every `.jsonl` beneath it. The choice is remembered.
 - **Hides temp sessions** — throwaway sessions that tools spawn in the system

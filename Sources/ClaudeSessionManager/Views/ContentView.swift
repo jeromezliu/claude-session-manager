@@ -3,6 +3,7 @@ import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var store: SessionStore
+    @ObservedObject private var terminals = TerminalManager.shared
 
     @State private var selectedSession: SessionSummary.ID?
     @State private var selectedTrash: TrashEntry.ID?
@@ -254,8 +255,19 @@ struct ContentView: View {
         switch store.viewMode {
         case .sessions:
             if let session = selectedSummary {
-                TranscriptView(session: session, mode: .active,
-                               onContinue: { store.continueSession(session) })
+                let terminal = terminals.session(for: session.id)
+                if let terminal, !terminal.isPoppedOut {
+                    VSplitView {
+                        TranscriptView(session: session, mode: .active,
+                                       onContinue: { store.continueSession(session) })
+                            .frame(minHeight: 180)
+                        TerminalPaneView(session: terminal)
+                            .frame(minHeight: 140)
+                    }
+                } else {
+                    TranscriptView(session: session, mode: .active,
+                                   onContinue: { store.continueSession(session) })
+                }
             } else {
                 ContentUnavailableView_Compat(
                     title: "No session selected",
@@ -362,7 +374,14 @@ struct ContentView: View {
         guard let path = ProcessInfo.processInfo.environment["CSM_SNAPSHOT_TERM"], !path.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             if let session = store.groups.first?.sessions.first {
+                selectedSession = session.id
                 store.continueSession(session)
+            }
+            if ProcessInfo.processInfo.environment["CSM_TERM_POPOUT"] == "1",
+               let s = store.groups.first?.sessions.first {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    terminals.session(for: s.id)?.popOut()
+                }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
                 SelfSnapshot.captureKeyWindow(to: URL(fileURLWithPath: path))

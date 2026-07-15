@@ -1,23 +1,27 @@
 import AppKit
 
-/// Tracks open in-app terminal windows, one per session. Re-opening a session
-/// that already has a window just focuses it instead of spawning a duplicate.
+/// Tracks running session terminals (one per session). Observable so the detail
+/// pane can show/hide the embedded terminal split as sessions start and end.
 @MainActor
-final class TerminalManager {
+final class TerminalManager: ObservableObject {
     static let shared = TerminalManager()
     private init() {}
 
-    private var controllers: [String: SessionTerminalController] = [:]
+    @Published private(set) var sessions: [String: TerminalSession] = [:]
 
-    func open(_ session: SessionSummary) {
-        if let existing = controllers[session.id] {
+    /// Start (or focus) a terminal for a session. New terminals begin embedded.
+    func continueSession(_ session: SessionSummary) {
+        if let existing = sessions[session.id] {
             existing.focus()
             return
         }
-        let controller = SessionTerminalController(session: session) { [weak self] in
-            self?.controllers[session.id] = nil
+        let terminal = TerminalSession(session: session) { [weak self] id in
+            self?.sessions[id] = nil
         }
-        controllers[session.id] = controller
-        controller.focus()
+        sessions[session.id] = terminal
     }
+
+    func session(for id: String) -> TerminalSession? { sessions[id] }
+
+    func end(_ id: String) { sessions[id]?.terminate() }
 }

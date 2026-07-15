@@ -192,9 +192,10 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    /// Resume the session in an internal terminal window (SwiftTerm-backed).
+    /// Resume the session in the internal terminal (SwiftTerm-backed), embedded
+    /// in the detail split by default.
     func continueSession(_ session: SessionSummary) {
-        TerminalManager.shared.open(session)
+        TerminalManager.shared.continueSession(session)
     }
 
     /// Resume the session in the external Terminal.app instead.
