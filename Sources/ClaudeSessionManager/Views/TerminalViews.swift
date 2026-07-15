@@ -5,6 +5,10 @@ import SwiftTerm
 /// container is currently showing (embedded pane or floating window).
 struct TerminalContainer: NSViewRepresentable {
     let terminal: LocalProcessTerminalView
+    /// Only the container for the terminal's *current* location (embedded vs
+    /// popped-out) should claim the shared view. Without this, both containers
+    /// fight over it during the transition and the loser goes blank.
+    var isActive: Bool = true
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
@@ -20,7 +24,7 @@ struct TerminalContainer: NSViewRepresentable {
     /// with Auto Layout so it always fills regardless of when layout happens
     /// (fixes a 0×0 frame after being reparented from a window).
     private func attach(to container: NSView) {
-        guard terminal.superview !== container else { return }
+        guard isActive, terminal.superview !== container else { return }
         terminal.removeFromSuperview()
         terminal.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(terminal)
@@ -63,7 +67,7 @@ struct TerminalPaneView: View {
             .padding(.vertical, 6)
             .background(.bar)
             Divider()
-            TerminalContainer(terminal: session.view)
+            TerminalContainer(terminal: session.view, isActive: !session.isPoppedOut)
         }
     }
 }
@@ -91,7 +95,7 @@ struct PoppedTerminalView: View {
             .padding(.vertical, 6)
             .background(.bar)
             Divider()
-            TerminalContainer(terminal: session.view)
+            TerminalContainer(terminal: session.view, isActive: session.isPoppedOut)
         }
         .frame(minWidth: 480, minHeight: 320)
     }
