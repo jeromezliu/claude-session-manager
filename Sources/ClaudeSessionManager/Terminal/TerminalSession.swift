@@ -47,7 +47,7 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
 
         let command: String
         if ProcessInfo.processInfo.environment["CSM_TERM_TEST"] == "1" {
-            command = "echo '### internal terminal OK'; echo \"cwd=$PWD\"; echo \"claude: $(command -v claude || echo NOT-FOUND)\"\n"
+            command = "for i in $(seq 1 60); do echo \"tick $i · internal terminal OK\"; sleep 0.1; done\n"
         } else {
             command = "claude --resume \(Self.shellQuote(session.id))\n"
         }

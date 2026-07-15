@@ -2,7 +2,13 @@ import SwiftUI
 
 struct SessionRow: View {
     let session: SessionSummary
-    var activity: TerminalActivity? = nil
+    // Observe the manager directly so the indicator appears/disappears even when
+    // the AppKit-backed sidebar List reuses this (otherwise unchanged) row.
+    @ObservedObject private var terminals = TerminalManager.shared
+
+    private var activity: TerminalActivity? {
+        terminals.session(for: session.id)?.activity
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {

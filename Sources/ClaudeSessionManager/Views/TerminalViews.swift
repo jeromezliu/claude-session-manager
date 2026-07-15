@@ -45,6 +45,7 @@ struct TerminalPaneView: View {
                 Text(session.hasExited ? "Terminal · ended" : "Terminal")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
+                ActivityDot(activity: session.activity)
                 Spacer()
                 Button { session.popOut() } label: {
                     Image(systemName: "macwindow.on.rectangle")
