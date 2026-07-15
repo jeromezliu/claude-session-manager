@@ -38,6 +38,19 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
 
         var envDict = ProcessInfo.processInfo.environment
+
+        // CRITICAL: strip Claude Code / Anthropic session markers the app may
+        // have inherited (e.g. when launched from within a Claude session). If
+        // `claude` sees CLAUDECODE / CLAUDE_CODE_SESSION_ID / etc. it runs as a
+        // nested child and does NOT persist the interactive transcript to
+        // ~/.claude/projects — so resumed work would silently vanish. Removing
+        // them makes the embedded terminal a clean, top-level Claude session.
+        for key in envDict.keys where
+            key == "CLAUDECODE" || key == "AI_AGENT" || key == "BAGGAGE" ||
+            key.hasPrefix("CLAUDE_") || key.hasPrefix("ANTHROPIC_") {
+            envDict.removeValue(forKey: key)
+        }
+
         envDict["TERM"] = "xterm-256color"
         envDict["COLORTERM"] = "truecolor"
         let env = envDict.map { "\($0.key)=\($0.value)" }
@@ -47,7 +60,7 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
 
         let command: String
         if ProcessInfo.processInfo.environment["CSM_TERM_TEST"] == "1" {
-            command = "for i in $(seq 1 60); do echo \"tick $i · internal terminal OK\"; sleep 0.1; done\n"
+            command = "echo '### internal terminal OK'; echo \"cwd=$PWD\"\n"
         } else {
             command = "claude --resume \(Self.shellQuote(session.id))\n"
         }
