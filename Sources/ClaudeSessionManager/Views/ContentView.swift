@@ -381,6 +381,11 @@ struct ContentView: View {
                let s = store.groups.first?.sessions.first {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     terminals.session(for: s.id)?.popOut()
+                    if ProcessInfo.processInfo.environment["CSM_TERM_POPIN"] == "1" {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            terminals.session(for: s.id)?.popIn()
+                        }
+                    }
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {

@@ -16,12 +16,21 @@ struct TerminalContainer: NSViewRepresentable {
         attach(to: nsView)
     }
 
+    /// Move the shared terminal view into this container, pinned to its edges
+    /// with Auto Layout so it always fills regardless of when layout happens
+    /// (fixes a 0×0 frame after being reparented from a window).
     private func attach(to container: NSView) {
         guard terminal.superview !== container else { return }
         terminal.removeFromSuperview()
-        terminal.frame = container.bounds
-        terminal.autoresizingMask = [.width, .height]
+        terminal.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(terminal)
+        NSLayoutConstraint.activate([
+            terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            terminal.topAnchor.constraint(equalTo: container.topAnchor),
+            terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        terminal.needsDisplay = true
     }
 }
 
@@ -72,8 +81,9 @@ struct PoppedTerminalView: View {
                     .lineLimit(1)
                 Spacer()
                 Button { session.popIn() } label: {
-                    Label("Embed", systemImage: "arrow.down.right.and.arrow.up.left")
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
                 }
+                .buttonStyle(.borderless)
                 .help("Embed back in the main window")
             }
             .padding(.horizontal, 10)
