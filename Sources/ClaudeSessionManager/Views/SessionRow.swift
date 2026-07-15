@@ -58,7 +58,7 @@ struct SessionRow: View {
 /// pulsing while Claude is actively producing output.
 struct ActivityDot: View {
     @ObservedObject var activity: TerminalActivity
-    @State private var bounce = false
+    @State private var pulse = false
 
     var body: some View {
         Group {
@@ -66,22 +66,24 @@ struct ActivityDot: View {
                 Circle()
                     .fill(Color.green)
                     .frame(width: 7, height: 7)
-                    .offset(y: bounce ? -4 : 0)
+                    .scaleEffect(pulse ? 1.45 : 1.0)
+                    .opacity(pulse ? 0.3 : 1.0)
+                    .shadow(color: .green.opacity(pulse ? 0.9 : 0.0), radius: pulse ? 3.5 : 0)
                     .help(activity.isWorking ? "Claude is working" : "Terminal running")
             }
         }
-        .onAppear { updateBounce(activity.isWorking) }
-        .onChange(of: activity.isWorking) { updateBounce($0) }
-        .onChange(of: activity.isRunning) { _ in updateBounce(activity.isWorking) }
+        .onAppear { updatePulse(activity.isWorking) }
+        .onChange(of: activity.isWorking) { updatePulse($0) }
+        .onChange(of: activity.isRunning) { _ in updatePulse(activity.isWorking) }
     }
 
-    private func updateBounce(_ working: Bool) {
+    private func updatePulse(_ working: Bool) {
         if working {
-            withAnimation(.easeInOut(duration: 0.36).repeatForever(autoreverses: true)) {
-                bounce = true
+            withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                pulse = true
             }
         } else {
-            withAnimation(.easeOut(duration: 0.15)) { bounce = false }
+            withAnimation(.easeOut(duration: 0.2)) { pulse = false }
         }
     }
 }
