@@ -101,7 +101,8 @@ struct ContentView: View {
                 Section {
                     if !collapsedProjects.contains(group.id) {
                         ForEach(group.sessions) { session in
-                            SessionRow(session: session)
+                            SessionRow(session: session,
+                                       activity: terminals.session(for: session.id)?.activity)
                                 .tag(session.id)
                                 .contextMenu { rowMenu(session) }
                         }

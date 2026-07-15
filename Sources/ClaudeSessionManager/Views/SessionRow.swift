@@ -2,12 +2,18 @@ import SwiftUI
 
 struct SessionRow: View {
     let session: SessionSummary
+    var activity: TerminalActivity? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(session.title)
-                .font(.body.weight(.medium))
-                .lineLimit(2)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                if let activity {
+                    ActivityDot(activity: activity)
+                }
+                Text(session.title)
+                    .font(.body.weight(.medium))
+                    .lineLimit(2)
+            }
 
             if let prompt = session.firstPrompt, prompt != session.title {
                 Text(prompt)
@@ -33,6 +39,32 @@ struct SessionRow: View {
         }
         .padding(.vertical, 3)
         .help("Last modified \(Fmt.full(session.modifiedAt))")
+    }
+}
+
+/// Per-session terminal indicator: a solid green dot while a terminal runs,
+/// pulsing while Claude is actively producing output.
+struct ActivityDot: View {
+    @ObservedObject var activity: TerminalActivity
+    @State private var animate = false
+
+    var body: some View {
+        Group {
+            if activity.isRunning {
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 7, height: 7)
+                    .scaleEffect(activity.isWorking && animate ? 1.35 : 1.0)
+                    .opacity(activity.isWorking && animate ? 0.4 : 1.0)
+                    .animation(activity.isWorking
+                               ? .easeInOut(duration: 0.55).repeatForever(autoreverses: true)
+                               : .easeOut(duration: 0.2),
+                               value: animate)
+                    .animation(.easeInOut(duration: 0.2), value: activity.isWorking)
+                    .onAppear { animate = true }
+                    .help(activity.isWorking ? "Claude is working" : "Terminal running")
+            }
+        }
     }
 }
 

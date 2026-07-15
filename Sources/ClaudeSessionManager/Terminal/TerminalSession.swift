@@ -10,7 +10,8 @@ import SwiftTerm
 final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalViewDelegate, NSWindowDelegate {
     let id: String
     let session: SessionSummary
-    let view: LocalProcessTerminalView
+    let view: ActivityTerminalView
+    let activity = TerminalActivity()
 
     @Published var isPoppedOut = false
     @Published var hasExited = false
@@ -22,9 +23,10 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
         self.id = session.id
         self.session = session
         self.onEnd = onEnd
-        self.view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
+        self.view = ActivityTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
         super.init()
         view.processDelegate = self
+        view.onOutput = { [weak self] in self?.activity.noteOutput() }
         start()
     }
 
@@ -117,6 +119,7 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         hasExited = true
+        activity.stop()
         let suffix = exitCode.map { " · exit \($0)" } ?? ""
         view.feed(text: "\r\n\u{1b}[2m[session ended\(suffix) — close this terminal]\u{1b}[0m\r\n")
     }
