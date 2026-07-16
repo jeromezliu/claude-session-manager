@@ -42,7 +42,7 @@ final class TerminalManager: ObservableObject {
             firstPrompt: nil, lastPrompt: nil,
             messageCount: 0, models: [], totalOutputTokens: 0,
             createdAt: nil, lastActivityAt: nil, modifiedAt: Date(), fileSize: 0,
-            latestContextTokens: 0, contextWindow: 200_000)
+            latestContextTokens: 0, maxContextTokens: 0)
 
         let terminal = TerminalSession(session: summary, resume: false) { [weak self] id in
             self?.observers[id] = nil

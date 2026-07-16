@@ -37,6 +37,7 @@ enum SessionParser {
         var createdAt: Date?
         var lastActivityAt: Date?
         var latestContextTokens = 0
+        var maxContextTokens = 0
         var lastModel: String?
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
@@ -75,6 +76,7 @@ enum SessionParser {
                         let cacheCreate = (usage["cache_creation_input_tokens"] as? Int) ?? 0
                         let ctx = input + cacheRead + cacheCreate
                         if ctx > 0 { latestContextTokens = ctx }
+                        if ctx > maxContextTokens { maxContextTokens = ctx }
                     }
                 }
             case "ai-title":
@@ -108,13 +110,8 @@ enum SessionParser {
             modifiedAt: mtime,
             fileSize: size,
             latestContextTokens: latestContextTokens,
-            contextWindow: contextWindow(for: lastModel)
+            maxContextTokens: maxContextTokens
         )
-    }
-
-    /// Context window (tokens) for a model id. Current Claude models are 200k.
-    static func contextWindow(for model: String?) -> Int {
-        200_000
     }
 
     // MARK: - Full transcript (for the detail pane)

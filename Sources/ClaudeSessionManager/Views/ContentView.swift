@@ -387,6 +387,11 @@ struct ContentView: View {
             }
             Menu {
                 Toggle("Show temporary sessions", isOn: $store.showTemporarySessions)
+                Picker("Context window", selection: $store.contextWindowMode) {
+                    Text("Auto").tag("auto")
+                    Text("200K").tag("200k")
+                    Text("1M").tag("1m")
+                }
             } label: {
                 Label("Options", systemImage: "ellipsis.circle")
             }

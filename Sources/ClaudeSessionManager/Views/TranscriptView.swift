@@ -14,6 +14,7 @@ struct TranscriptView: View {
     @State private var loading = true
     @State private var watcher: FileWatcher?
     @AppStorage("showToolActivity") private var showToolActivity = false
+    @AppStorage("contextWindowMode") private var contextWindowMode = "auto"
 
     /// Events for display: newest first, and (by default) only real conversation
     /// turns — attachments, system, meta and tool-only turns are hidden.
@@ -122,8 +123,9 @@ struct TranscriptView: View {
         var c: [String] = []
         c.append("\(session.messageCount) messages")
         if session.latestContextTokens > 0 {
-            let pct = Int((Double(session.latestContextTokens) / Double(max(session.contextWindow, 1))) * 100)
-            c.append("context \(Fmt.tokens(session.latestContextTokens))/\(Fmt.tokens(session.contextWindow)) · \(pct)%")
+            let window = session.contextWindow(mode: contextWindowMode)
+            let pct = Int((Double(session.latestContextTokens) / Double(max(window, 1))) * 100)
+            c.append("context \(Fmt.tokens(session.latestContextTokens))/\(Fmt.window(window)) · \(pct)%")
         }
         if let branch = session.gitBranch, branch != "HEAD" { c.append("⎇ \(branch)") }
         if !session.models.isEmpty { c.append(session.models.map(Fmt.model).joined(separator: ", ")) }

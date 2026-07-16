@@ -34,6 +34,13 @@ enum Fmt {
         return "\(n)"
     }
 
+    /// Compact whole-unit label for a context window, e.g. 200000 -> "200K", 1000000 -> "1M".
+    static func window(_ n: Int) -> String {
+        if n >= 1_000_000 { return "\(n / 1_000_000)M" }
+        if n >= 1_000 { return "\(n / 1_000)K" }
+        return "\(n)"
+    }
+
     /// Trim a model id like "claude-fable-5" to a short label.
     static func model(_ id: String) -> String {
         id.replacingOccurrences(of: "claude-", with: "")

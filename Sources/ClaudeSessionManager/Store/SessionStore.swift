@@ -33,6 +33,9 @@ final class SessionStore: ObservableObject {
         didSet { Task { await reload() } }
     }
 
+    /// Context-window limit used for token-usage display: "auto", "200k", "1m".
+    @AppStorage("contextWindowMode") var contextWindowMode = "auto"
+
     /// Root directory to scan. Persisted across launches.
     @AppStorage("rootPath") var rootPath: String = SessionStore.defaultRoot {
         didSet { Task { await reload() } }
