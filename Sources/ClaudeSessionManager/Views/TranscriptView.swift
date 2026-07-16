@@ -34,10 +34,10 @@ struct TranscriptView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if displayedEvents.isEmpty {
                 ContentUnavailableView_Compat(
-                    title: events.isEmpty ? "Empty transcript" : "No conversation to show",
-                    systemImage: "doc",
+                    title: events.isEmpty ? "No conversation yet" : "No conversation to show",
+                    systemImage: "bubble.left.and.bubble.right",
                     message: events.isEmpty
-                        ? "No renderable messages in this session."
+                        ? "This session has no messages yet — type in the terminal below to begin."
                         : "Only tool/system activity here — toggle the eye icon to show it."
                 )
             } else {
@@ -130,9 +130,9 @@ struct TranscriptView: View {
         if !session.models.isEmpty { c.append(session.models.map(Fmt.model).joined(separator: ", ")) }
         if session.totalOutputTokens > 0 { c.append("\(Fmt.tokens(session.totalOutputTokens)) out tokens") }
         if let v = session.claudeVersion { c.append("v\(v)") }
-        c.append("created \(Fmt.full(session.createdAt))")
-        c.append("updated \(Fmt.relative(session.modifiedAt))")
-        c.append(Fmt.bytes(session.fileSize))
+        if let created = session.createdAt { c.append("created \(Fmt.full(created))") }
+        if session.lastActivityAt != nil { c.append("updated \(Fmt.relative(session.modifiedAt))") }
+        if session.fileSize > 0 { c.append(Fmt.bytes(session.fileSize)) }
         c.append(session.id)
         return c
     }

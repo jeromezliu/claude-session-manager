@@ -277,21 +277,8 @@ struct ContentView: View {
             if selectedSessions.count > 1 {
                 multiSelectionPanel
             } else if let session = selectedSummary {
-                let terminal = terminals.session(for: session.id)
-                if let terminal, !terminal.isPoppedOut {
-                    if terminalMaximized {
-                        TerminalPaneView(session: terminal, isMaximized: true,
-                                         onToggleMaximize: { terminalMaximized = false })
-                    } else {
-                        VSplitView {
-                            TranscriptView(session: session, mode: .active,
-                                           onContinue: { store.continueSession(session) })
-                                .frame(minHeight: 180)
-                            TerminalPaneView(session: terminal, isMaximized: false,
-                                             onToggleMaximize: { terminalMaximized = true })
-                                .frame(minHeight: 140)
-                        }
-                    }
+                if let terminal = terminals.session(for: session.id), !terminal.isPoppedOut {
+                    terminalSplit(summary: session, terminal: terminal)
                 } else {
                     TranscriptView(session: session, mode: .active,
                                    onContinue: { store.continueSession(session) })
@@ -299,7 +286,7 @@ struct ContentView: View {
             } else if let id = activeNewTerminal,
                       let terminal = terminals.session(for: id),
                       !terminal.isPoppedOut {
-                TerminalPaneView(session: terminal)
+                terminalSplit(summary: terminal.session, terminal: terminal)
             } else {
                 ContentUnavailableView_Compat(
                     title: "No session selected",
@@ -320,6 +307,25 @@ struct ContentView: View {
                     message: "Pick a trashed session to preview, recover, or delete it."
                 )
             }
+        }
+    }
+
+    /// Transcript-area + terminal in one stable split (terminal never reparented).
+    /// "Maximize" collapses the transcript to zero height instead of removing it,
+    /// so the terminal view stays put (no blanking). New sessions flow through
+    /// here too — their transcript area just shows an empty-state notice.
+    @ViewBuilder
+    private func terminalSplit(summary: SessionSummary, terminal: TerminalSession) -> some View {
+        VSplitView {
+            TranscriptView(session: summary, mode: .active,
+                           onContinue: { store.continueSession(summary) })
+                .frame(minHeight: terminalMaximized ? 0 : 180,
+                       maxHeight: terminalMaximized ? 0 : .infinity)
+                .opacity(terminalMaximized ? 0 : 1)
+            TerminalPaneView(session: terminal,
+                             isMaximized: terminalMaximized,
+                             onToggleMaximize: { terminalMaximized.toggle() })
+                .frame(minHeight: 140)
         }
     }
 
@@ -491,6 +497,9 @@ struct ContentView: View {
             if let session = store.groups.first?.sessions.first {
                 selectedSessions = [session.id]
                 store.continueSession(session)
+            }
+            if ProcessInfo.processInfo.environment["CSM_TERM_MAX"] == "1" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { terminalMaximized = true }
             }
             if ProcessInfo.processInfo.environment["CSM_TERM_POPOUT"] == "1",
                let s = store.groups.first?.sessions.first {

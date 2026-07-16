@@ -52,6 +52,9 @@ struct TerminalPaneView: View {
     /// Provided when the pane can toggle full-height; nil hides the button.
     var isMaximized: Bool = false
     var onToggleMaximize: (() -> Void)? = nil
+    /// False for a pane that is being swapped out (e.g. split↔maximized), so it
+    /// doesn't steal the shared terminal view back from the incoming pane.
+    var active: Bool = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -87,7 +90,7 @@ struct TerminalPaneView: View {
             .padding(.vertical, 6)
             .background(.bar)
             Divider()
-            TerminalContainer(terminal: session.view, isActive: !session.isPoppedOut)
+            TerminalContainer(terminal: session.view, isActive: active && !session.isPoppedOut)
         }
     }
 }
