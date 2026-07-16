@@ -5,13 +5,18 @@ struct ContentView: View {
     @EnvironmentObject var store: SessionStore
     @ObservedObject private var terminals = TerminalManager.shared
 
-    @State private var selectedSession: SessionSummary.ID?
+    @State private var selectedSessions: Set<SessionSummary.ID> = []
     @State private var selectedTrash: TrashEntry.ID?
     @State private var collapsedProjects: Set<String> = []
     @State private var renameTarget: SessionSummary?
     @State private var deleteTarget: SessionSummary?
     @State private var purgeTarget: TrashEntry?
     @State private var confirmEmpty = false
+    @State private var confirmDeleteSelection = false
+    /// Synthetic id of a just-created session shown embedded in the detail pane.
+    @State private var activeNewTerminal: String?
+    /// Whether the embedded terminal fills the whole detail (hides transcript).
+    @State private var terminalMaximized = false
 
     var body: some View {
         NavigationSplitView {
@@ -23,7 +28,8 @@ struct ContentView: View {
         .searchable(text: $store.searchText, placement: .sidebar, prompt: "Search sessions")
         .toolbar { toolbarContent }
         .onChange(of: store.groups.count) { _ in autoSelectForSnapshot() }
-        .onAppear { maybeTerminalSnapshot() }
+        .onChange(of: selectedSessions) { _ in terminalMaximized = false }
+        .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot() }
         .sheet(item: $renameTarget) { target in
             RenameSheet(session: target) { newTitle in
                 store.rename(target, to: newTitle)
@@ -31,12 +37,22 @@ struct ContentView: View {
         }
         .alert("Move session to Trash?", isPresented: presenceBinding($deleteTarget), presenting: deleteTarget) { session in
             Button("Move to Trash", role: .destructive) {
-                if selectedSession == session.id { selectedSession = nil }
+                selectedSessions.remove(session.id)
                 store.delete(session)
             }
             Button("Cancel", role: .cancel) {}
         } message: { session in
             Text("“\(session.title)” will move to the app Trash. You can recover it from the Trash tab.")
+        }
+        .alert("Move \(selectedSessions.count) sessions to Trash?", isPresented: $confirmDeleteSelection) {
+            Button("Move to Trash", role: .destructive) {
+                let ids = selectedSessions
+                selectedSessions = []
+                store.deleteMany(ids)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They will move to the app Trash. You can recover them from the Trash tab.")
         }
         .alert("Delete permanently?", isPresented: presenceBinding($purgeTarget), presenting: purgeTarget) { entry in
             Button("Delete Permanently", role: .destructive) {
@@ -96,7 +112,7 @@ struct ContentView: View {
     // MARK: - Sessions list (projects → sessions, sectioned)
 
     private var sessionsList: some View {
-        List(selection: $selectedSession) {
+        List(selection: $selectedSessions) {
             ForEach(store.filteredGroups) { group in
                 Section {
                     if !collapsedProjects.contains(group.id) {
@@ -237,12 +253,16 @@ struct ContentView: View {
 
     // MARK: - Detail
 
-    private var selectedSummary: SessionSummary? {
-        guard let id = selectedSession else { return nil }
+    private func session(for id: SessionSummary.ID) -> SessionSummary? {
         for g in store.filteredGroups {
             if let s = g.sessions.first(where: { $0.id == id }) { return s }
         }
         return nil
+    }
+
+    private var selectedSummary: SessionSummary? {
+        guard selectedSessions.count == 1, let id = selectedSessions.first else { return nil }
+        return session(for: id)
     }
 
     private var selectedTrashEntry: TrashEntry? {
@@ -254,25 +274,24 @@ struct ContentView: View {
     private var detail: some View {
         switch store.viewMode {
         case .sessions:
-            if let session = selectedSummary {
-                let terminal = terminals.session(for: session.id)
-                if let terminal, !terminal.isPoppedOut {
-                    VSplitView {
-                        TranscriptView(session: session, mode: .active,
-                                       onContinue: { store.continueSession(session) })
-                            .frame(minHeight: 180)
-                        TerminalPaneView(session: terminal)
-                            .frame(minHeight: 140)
-                    }
+            if selectedSessions.count > 1 {
+                multiSelectionPanel
+            } else if let session = selectedSummary {
+                if let terminal = terminals.session(for: session.id), !terminal.isPoppedOut {
+                    terminalSplit(summary: session, terminal: terminal)
                 } else {
                     TranscriptView(session: session, mode: .active,
                                    onContinue: { store.continueSession(session) })
                 }
+            } else if let id = activeNewTerminal,
+                      let terminal = terminals.session(for: id),
+                      !terminal.isPoppedOut {
+                terminalSplit(summary: terminal.displaySummary, terminal: terminal)
             } else {
                 ContentUnavailableView_Compat(
                     title: "No session selected",
                     systemImage: "text.bubble",
-                    message: "Pick a session to read its transcript."
+                    message: "Pick a session to read its transcript, or ⌘-click to select several."
                 )
             }
         case .trash:
@@ -291,10 +310,54 @@ struct ContentView: View {
         }
     }
 
+    /// Transcript-area + terminal in one stable split (terminal never reparented).
+    /// "Maximize" collapses the transcript to zero height instead of removing it,
+    /// so the terminal view stays put (no blanking). New sessions flow through
+    /// here too — their transcript area just shows an empty-state notice.
+    @ViewBuilder
+    private func terminalSplit(summary: SessionSummary, terminal: TerminalSession) -> some View {
+        VSplitView {
+            TranscriptView(session: summary, mode: .active,
+                           onContinue: { store.continueSession(summary) })
+                .frame(minHeight: terminalMaximized ? 0 : 180,
+                       maxHeight: terminalMaximized ? 0 : .infinity)
+                .opacity(terminalMaximized ? 0 : 1)
+            TerminalPaneView(session: terminal,
+                             isMaximized: terminalMaximized,
+                             onToggleMaximize: { terminalMaximized.toggle() })
+                .frame(minHeight: 140)
+        }
+    }
+
+    private var multiSelectionPanel: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "checklist")
+                .font(.system(size: 40))
+                .foregroundStyle(.tertiary)
+            Text("\(selectedSessions.count) sessions selected")
+                .font(.title3.weight(.semibold))
+            Button(role: .destructive) { confirmDeleteSelection = true } label: {
+                Label("Move \(selectedSessions.count) to Trash", systemImage: "trash")
+            }
+            .buttonStyle(.borderedProminent)
+            Text("⌘-click or ⇧-click to adjust the selection.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
     // MARK: - Menus & toolbar
 
     @ViewBuilder
     private func rowMenu(_ session: SessionSummary) -> some View {
+        if selectedSessions.count > 1 && selectedSessions.contains(session.id) {
+            Button("Move \(selectedSessions.count) to Trash", role: .destructive) {
+                confirmDeleteSelection = true
+            }
+            Divider()
+        }
         Button("Continue in Terminal") { store.continueSession(session) }
         Button("Open in Terminal.app") { store.openInExternalTerminal(session) }
         Button("Rename…") { renameTarget = session }
@@ -310,11 +373,27 @@ struct ContentView: View {
         ToolbarItemGroup {
             switch store.viewMode {
             case .sessions:
-                if let session = selectedSummary {
+                Menu {
+                    Button(store.newSessionDir) {}.disabled(true)
+                    Divider()
+                    Button("Choose Folder…") { chooseFolderAndStartNewSession() }
+                } label: {
+                    Label("New Session", systemImage: "plus")
+                } primaryAction: {
+                    createNewSession(in: URL(fileURLWithPath: store.newSessionDir))
+                }
+                .help("New session in \(store.newSessionDir) — click ⌄ to choose another folder")
+
+                if selectedSessions.count > 1 {
+                    Button(role: .destructive) { confirmDeleteSelection = true } label: {
+                        Label("Delete \(selectedSessions.count)", systemImage: "trash")
+                    }
+                    .help("Move the selected sessions to Trash")
+                } else if let session = selectedSummary {
                     Button { store.continueSession(session) } label: {
                         Label("Continue", systemImage: "play.fill")
                     }
-                    .help("Resume this session in Claude Code")
+                    .help("Resume this session in an internal terminal")
                     Button { renameTarget = session } label: {
                         Label("Rename", systemImage: "pencil")
                     }
@@ -335,6 +414,11 @@ struct ContentView: View {
             }
             Menu {
                 Toggle("Show temporary sessions", isOn: $store.showTemporarySessions)
+                Picker("Context window", selection: $store.contextWindowMode) {
+                    Text("Auto").tag("auto")
+                    Text("200K").tag("200k")
+                    Text("1M").tag("1m")
+                }
             } label: {
                 Label("Options", systemImage: "ellipsis.circle")
             }
@@ -361,12 +445,49 @@ struct ContentView: View {
                 set: { if !$0 { target.wrappedValue = nil } })
     }
 
+    /// Dev-only: create a new session and snapshot the embedded detail pane.
+    private func maybeNewSessionSnapshot() {
+        guard let path = ProcessInfo.processInfo.environment["CSM_NEWSESSION_SNAP"], !path.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            createNewSession(in: URL(fileURLWithPath: NSHomeDirectory()))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                SelfSnapshot.captureKeyWindow(to: URL(fileURLWithPath: path))
+                if ProcessInfo.processInfo.environment["CSM_SNAPSHOT_QUIT"] == "1" { NSApp.terminate(nil) }
+            }
+        }
+    }
+
+    /// Start a new session in a folder and show it embedded in the detail pane.
+    private func createNewSession(in dir: URL) {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        let target = (fm.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue)
+            ? dir : URL(fileURLWithPath: NSHomeDirectory())
+        selectedSessions = []
+        activeNewTerminal = store.newSession(inDirectory: target)
+    }
+
+    /// Pick a folder (remembered as the new default), then start a session there.
+    private func chooseFolderAndStartNewSession() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Start Session"
+        panel.message = "Choose the working directory for the new Claude session"
+        panel.directoryURL = URL(fileURLWithPath: store.newSessionDir)
+        if panel.runModal() == .OK, let url = panel.url {
+            store.newSessionDir = url.path   // remember as the new default
+            createNewSession(in: url)
+        }
+    }
+
     /// When launched in snapshot mode, pick the first session so the detail pane
     /// shows a real transcript in the captured image.
     private func autoSelectForSnapshot() {
         guard ProcessInfo.processInfo.environment["CSM_SNAPSHOT"] != nil else { return }
-        guard selectedSession == nil, let session = store.groups.first?.sessions.first else { return }
-        selectedSession = session.id
+        guard selectedSessions.isEmpty, let session = store.groups.first?.sessions.first else { return }
+        selectedSessions = [session.id]
     }
 
     /// Dev-only: open a terminal for the first session and snapshot that window.
@@ -374,8 +495,11 @@ struct ContentView: View {
         guard let path = ProcessInfo.processInfo.environment["CSM_SNAPSHOT_TERM"], !path.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             if let session = store.groups.first?.sessions.first {
-                selectedSession = session.id
+                selectedSessions = [session.id]
                 store.continueSession(session)
+            }
+            if ProcessInfo.processInfo.environment["CSM_TERM_MAX"] == "1" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { terminalMaximized = true }
             }
             if ProcessInfo.processInfo.environment["CSM_TERM_POPOUT"] == "1",
                let s = store.groups.first?.sessions.first {

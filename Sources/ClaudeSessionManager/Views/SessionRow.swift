@@ -26,11 +26,11 @@ struct SessionRow: View {
                     .font(.body.weight(.medium))
                     .lineLimit(2)
 
-                if let prompt = session.firstPrompt, prompt != session.title {
+                if let prompt = (session.lastPrompt ?? session.firstPrompt), prompt != session.title {
                     Text(prompt)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
 
                 HStack(spacing: 8) {

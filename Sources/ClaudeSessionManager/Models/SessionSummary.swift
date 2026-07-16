@@ -25,8 +25,33 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
     let totalOutputTokens: Int
 
     let createdAt: Date?
+    /// Timestamp of the last actual user/assistant message (not metadata) — used
+    /// to order the list by most-recent conversation, ignoring metadata touches.
+    let lastActivityAt: Date?
     let modifiedAt: Date
     let fileSize: Int
+
+    /// Approx context tokens used at the last turn (input + cache read/creation).
+    let latestContextTokens: Int
+    /// Peak context tokens observed across the session (used to auto-detect a
+    /// 1M-context session when it exceeds the 200k default).
+    let maxContextTokens: Int
+
+    /// True when the session contains at least one real conversation turn.
+    var hasConversation: Bool { messageCount > 0 }
+
+    /// Best timestamp for sorting: last conversation, else file mtime.
+    var sortDate: Date { lastActivityAt ?? modifiedAt }
+
+    /// Resolve the context-window limit for display given the user's setting.
+    /// "auto" bumps to 1M once a session's observed usage exceeds 200k.
+    func contextWindow(mode: String) -> Int {
+        switch mode {
+        case "200k": return 200_000
+        case "1m": return 1_000_000
+        default: return maxContextTokens > 200_000 ? 1_000_000 : 200_000
+        }
+    }
 
     /// A readable project name derived from the cwd (last path component).
     var projectName: String {
@@ -64,7 +89,8 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
             title: newTitle, firstPrompt: firstPrompt, lastPrompt: lastPrompt,
             messageCount: messageCount, models: models,
             totalOutputTokens: totalOutputTokens, createdAt: createdAt,
-            modifiedAt: modifiedAt, fileSize: fileSize
+            lastActivityAt: lastActivityAt, modifiedAt: modifiedAt, fileSize: fileSize,
+            latestContextTokens: latestContextTokens, maxContextTokens: maxContextTokens
         )
     }
 }

@@ -13,6 +13,17 @@ struct TranscriptView: View {
     @State private var events: [TranscriptEvent] = []
     @State private var loading = true
     @State private var watcher: FileWatcher?
+    @AppStorage("showToolActivity") private var showToolActivity = false
+    @AppStorage("contextWindowMode") private var contextWindowMode = "auto"
+
+    /// Events for display: newest first, and (by default) only real conversation
+    /// turns — attachments, system, meta and tool-only turns are hidden.
+    private var displayedEvents: [TranscriptEvent] {
+        let base = showToolActivity ? events : events.filter { event in
+            event.blocks.contains { if case .text = $0 { return true } else { return false } }
+        }
+        return base.reversed()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,16 +32,18 @@ struct TranscriptView: View {
             if loading {
                 ProgressView("Loading transcript…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if events.isEmpty {
+            } else if displayedEvents.isEmpty {
                 ContentUnavailableView_Compat(
-                    title: "Empty transcript",
-                    systemImage: "doc",
-                    message: "No renderable messages in this session."
+                    title: events.isEmpty ? "No conversation yet" : "No conversation to show",
+                    systemImage: "bubble.left.and.bubble.right",
+                    message: events.isEmpty
+                        ? "This session has no messages yet — type in the terminal below to begin."
+                        : "Only tool/system activity here — toggle the eye icon to show it."
                 )
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(events) { event in
+                        ForEach(displayedEvents) { event in
                             EventView(event: event)
                         }
                     }
@@ -38,7 +51,6 @@ struct TranscriptView: View {
                 }
             }
         }
-        .navigationTitle(session.title)
         .task(id: session.id) {
             await load()
             // Live-reload as the file grows (e.g. while resumed in the terminal).
@@ -67,7 +79,13 @@ struct TranscriptView: View {
                     }
                 }
                 Spacer()
-                headerActions
+                HStack(spacing: 8) {
+                    Button { showToolActivity.toggle() } label: {
+                        Image(systemName: showToolActivity ? "eye.fill" : "eye.slash")
+                    }
+                    .help(showToolActivity ? "Hide tool & system activity" : "Show tool & system activity")
+                    headerActions
+                }
             }
 
             // Metadata chips
@@ -103,13 +121,18 @@ struct TranscriptView: View {
     private var chips: [String] {
         var c: [String] = []
         c.append("\(session.messageCount) messages")
+        if session.latestContextTokens > 0 {
+            let window = session.contextWindow(mode: contextWindowMode)
+            let pct = Int((Double(session.latestContextTokens) / Double(max(window, 1))) * 100)
+            c.append("context \(Fmt.tokens(session.latestContextTokens))/\(Fmt.window(window)) · \(pct)%")
+        }
         if let branch = session.gitBranch, branch != "HEAD" { c.append("⎇ \(branch)") }
         if !session.models.isEmpty { c.append(session.models.map(Fmt.model).joined(separator: ", ")) }
         if session.totalOutputTokens > 0 { c.append("\(Fmt.tokens(session.totalOutputTokens)) out tokens") }
         if let v = session.claudeVersion { c.append("v\(v)") }
-        c.append("created \(Fmt.full(session.createdAt))")
-        c.append("updated \(Fmt.relative(session.modifiedAt))")
-        c.append(Fmt.bytes(session.fileSize))
+        if let created = session.createdAt { c.append("created \(Fmt.full(created))") }
+        if session.lastActivityAt != nil { c.append("updated \(Fmt.relative(session.modifiedAt))") }
+        if session.fileSize > 0 { c.append(Fmt.bytes(session.fileSize)) }
         c.append(session.id)
         return c
     }

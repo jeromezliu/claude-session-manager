@@ -35,6 +35,10 @@ enum SessionParser {
         var models: [String] = []
         var totalOutput = 0
         var createdAt: Date?
+        var lastActivityAt: Date?
+        var latestContextTokens = 0
+        var maxContextTokens = 0
+        var lastModel: String?
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
@@ -48,6 +52,7 @@ enum SessionParser {
             switch type {
             case "user":
                 messageCount += 1
+                if let t = parseDate(obj["timestamp"]) { lastActivityAt = t }
                 if let msg = obj["message"] as? [String: Any] {
                     let t = firstText(from: msg["content"])
                     if let t, !t.isEmpty {
@@ -57,11 +62,21 @@ enum SessionParser {
                 }
             case "assistant":
                 messageCount += 1
+                if let t = parseDate(obj["timestamp"]) { lastActivityAt = t }
                 if let msg = obj["message"] as? [String: Any] {
-                    if let m = msg["model"] as? String, !models.contains(m) { models.append(m) }
-                    if let usage = msg["usage"] as? [String: Any],
-                       let out = usage["output_tokens"] as? Int {
-                        totalOutput += out
+                    if let m = msg["model"] as? String {
+                        lastModel = m
+                        if !models.contains(m) { models.append(m) }
+                    }
+                    if let usage = msg["usage"] as? [String: Any] {
+                        if let out = usage["output_tokens"] as? Int { totalOutput += out }
+                        // Context size at this turn ≈ input + cache read + cache creation.
+                        let input = (usage["input_tokens"] as? Int) ?? 0
+                        let cacheRead = (usage["cache_read_input_tokens"] as? Int) ?? 0
+                        let cacheCreate = (usage["cache_creation_input_tokens"] as? Int) ?? 0
+                        let ctx = input + cacheRead + cacheCreate
+                        if ctx > 0 { latestContextTokens = ctx }
+                        if ctx > maxContextTokens { maxContextTokens = ctx }
                     }
                 }
             case "ai-title":
@@ -91,8 +106,11 @@ enum SessionParser {
             models: models,
             totalOutputTokens: totalOutput,
             createdAt: createdAt,
+            lastActivityAt: lastActivityAt,
             modifiedAt: mtime,
-            fileSize: size
+            fileSize: size,
+            latestContextTokens: latestContextTokens,
+            maxContextTokens: maxContextTokens
         )
     }
 
