@@ -48,11 +48,20 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIconName</key><string>AppIcon</string>
 </dict>
 </plist>
 PLIST
 
 echo "APPL????" > "${APP_DIR}/Contents/PkgInfo"
+
+# App icon
+if [[ -f "Resources/AppIcon.icns" ]]; then
+    cp "Resources/AppIcon.icns" "${RES_DIR}/AppIcon.icns"
+else
+    echo "  (AppIcon.icns not found — run: swift Icon/GenerateIcon.swift Icon/AppIcon.iconset && iconutil -c icns Icon/AppIcon.iconset -o Resources/AppIcon.icns)"
+fi
 
 # Ad-hoc signature so the GUI app launches without Gatekeeper complaints.
 codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || echo "  (codesign skipped)"

@@ -11,3 +11,6 @@ build/
 *.xcodeproj/xcuserdata/
 xcuserdata/
 DerivedData/
+
+# Generated iconset (regenerate via Icon/GenerateIcon.swift)
+Icon/*.iconset/
