@@ -109,6 +109,18 @@ Icon/        GenerateIcon.swift (CoreGraphics app-icon generator)
 docs/        make-screenshot.swift (README screenshot renderer)
 ```
 
+## Releasing (maintainers)
+
+```sh
+./release.sh 1.1.0
+```
+
+Builds and zips the app, bumps the Homebrew cask (version + `sha256`), publishes
+a GitHub release with the zip, and updates the [tap](https://github.com/jeromezliu/homebrew-tap).
+Run it with the account that owns the public repo/tap; it restores your previous
+`gh` account afterward. Set `SYNC_PRIVATE_REMOTE=origin` to also push to a
+private mirror.
+
 ## Notes on the session format
 
 Each session is a JSONL file; every line is a typed event. The app reads
