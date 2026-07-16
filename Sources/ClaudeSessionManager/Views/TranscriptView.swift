@@ -13,6 +13,16 @@ struct TranscriptView: View {
     @State private var events: [TranscriptEvent] = []
     @State private var loading = true
     @State private var watcher: FileWatcher?
+    @AppStorage("showToolActivity") private var showToolActivity = false
+
+    /// Events for display: newest first, and (by default) only real conversation
+    /// turns — attachments, system, meta and tool-only turns are hidden.
+    private var displayedEvents: [TranscriptEvent] {
+        let base = showToolActivity ? events : events.filter { event in
+            event.blocks.contains { if case .text = $0 { return true } else { return false } }
+        }
+        return base.reversed()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,16 +31,18 @@ struct TranscriptView: View {
             if loading {
                 ProgressView("Loading transcript…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if events.isEmpty {
+            } else if displayedEvents.isEmpty {
                 ContentUnavailableView_Compat(
-                    title: "Empty transcript",
+                    title: events.isEmpty ? "Empty transcript" : "No conversation to show",
                     systemImage: "doc",
-                    message: "No renderable messages in this session."
+                    message: events.isEmpty
+                        ? "No renderable messages in this session."
+                        : "Only tool/system activity here — toggle the eye icon to show it."
                 )
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(events) { event in
+                        ForEach(displayedEvents) { event in
                             EventView(event: event)
                         }
                     }
@@ -67,7 +79,13 @@ struct TranscriptView: View {
                     }
                 }
                 Spacer()
-                headerActions
+                HStack(spacing: 8) {
+                    Button { showToolActivity.toggle() } label: {
+                        Image(systemName: showToolActivity ? "eye.fill" : "eye.slash")
+                    }
+                    .help(showToolActivity ? "Hide tool & system activity" : "Show tool & system activity")
+                    headerActions
+                }
             }
 
             // Metadata chips
@@ -103,6 +121,10 @@ struct TranscriptView: View {
     private var chips: [String] {
         var c: [String] = []
         c.append("\(session.messageCount) messages")
+        if session.latestContextTokens > 0 {
+            let pct = Int((Double(session.latestContextTokens) / Double(max(session.contextWindow, 1))) * 100)
+            c.append("context \(Fmt.tokens(session.latestContextTokens))/\(Fmt.tokens(session.contextWindow)) · \(pct)%")
+        }
         if let branch = session.gitBranch, branch != "HEAD" { c.append("⎇ \(branch)") }
         if !session.models.isEmpty { c.append(session.models.map(Fmt.model).joined(separator: ", ")) }
         if session.totalOutputTokens > 0 { c.append("\(Fmt.tokens(session.totalOutputTokens)) out tokens") }

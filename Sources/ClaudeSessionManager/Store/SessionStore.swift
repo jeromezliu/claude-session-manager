@@ -25,6 +25,9 @@ final class SessionStore: ObservableObject {
     /// Count of temp/ephemeral sessions excluded from the current scan.
     @Published var hiddenCount = 0
 
+    private var watcher: DirectoryWatcher?
+    private var watchedPath: String?
+
     /// Whether to include throwaway temp-dir sessions (analysis logs, etc.).
     @AppStorage("showTemporarySessions") var showTemporarySessions = false {
         didSet { Task { await reload() } }
@@ -82,7 +85,31 @@ final class SessionStore: ObservableObject {
         case .failure(let e): errorMessage = e.localizedDescription; groups = []; hiddenCount = 0
         }
         await loadTrash()
+        ensureWatcher()
         isLoading = false
+    }
+
+    /// Watch the projects root so the list auto-refreshes when files change.
+    private func ensureWatcher() {
+        guard watchedPath != rootPath else { return }
+        watchedPath = rootPath
+        watcher = DirectoryWatcher(path: rootPath) { [weak self] in
+            Task { await self?.refreshQuietly() }
+        }
+    }
+
+    /// A rescan that doesn't toggle the loading spinner (for background refresh).
+    func refreshQuietly() async {
+        let root = rootURL
+        let includeTemp = showTemporarySessions
+        let result = await Task.detached(priority: .utility) {
+            try? Self.scan(root: root, includeTemp: includeTemp)
+        }.value
+        if let r = result {
+            groups = r.groups
+            hiddenCount = r.hidden
+        }
+        await loadTrash()
     }
 
     func loadTrash() async {
@@ -104,17 +131,23 @@ final class SessionStore: ObservableObject {
                           userInfo: [NSLocalizedDescriptionKey: "Folder not found: \(root.path)"])
         }
 
-        // Find every *.jsonl under the root (any nesting).
-        var files: [URL] = []
-        if let en = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey],
+        // Find every *.jsonl under the root (any nesting), with attributes.
+        var files: [(url: URL, mtime: Date, size: Int)] = []
+        if let en = fm.enumerator(at: root,
+                                  includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
                                   options: [.skipsHiddenFiles]) {
             for case let url as URL in en where url.pathExtension == "jsonl" {
-                files.append(url)
+                let vals = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                files.append((url,
+                              vals?.contentModificationDate ?? Date(timeIntervalSince1970: 0),
+                              vals?.fileSize ?? 0))
             }
         }
 
-        // Parse summaries, then drop throwaway temp-dir sessions unless asked to keep them.
-        let parsed: [SessionSummary] = files.compactMap { SessionParser.summary(for: $0) }
+        // Parse (cached by mtime+size), then drop throwaway temp-dir sessions.
+        let parsed: [SessionSummary] = files.compactMap {
+            SummaryCache.shared.summary(for: $0.url, mtime: $0.mtime, size: $0.size)
+        }
         let summaries = includeTemp ? parsed : parsed.filter { !$0.isEphemeral }
         let hidden = parsed.count - summaries.count
 
@@ -122,7 +155,8 @@ final class SessionStore: ObservableObject {
         for s in summaries { byFolder[s.projectFolder, default: []].append(s) }
 
         var groups: [ProjectGroup] = byFolder.map { folder, sessions in
-            let sorted = sessions.sorted { $0.modifiedAt > $1.modifiedAt }
+            // Latest conversation first within each project.
+            let sorted = sessions.sorted { $0.sortDate > $1.sortDate }
             let sample = sorted.first
             return ProjectGroup(
                 id: folder,
@@ -132,7 +166,7 @@ final class SessionStore: ObservableObject {
             )
         }
         // Most-recently-active projects first.
-        groups.sort { ($0.sessions.first?.modifiedAt ?? .distantPast) > ($1.sessions.first?.modifiedAt ?? .distantPast) }
+        groups.sort { ($0.sessions.first?.sortDate ?? .distantPast) > ($1.sessions.first?.sortDate ?? .distantPast) }
         return ScanResult(groups: groups, hidden: hidden)
     }
 
@@ -159,6 +193,27 @@ final class SessionStore: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Move several sessions to the trash at once.
+    func deleteMany(_ ids: Set<String>) {
+        let targets = groups.flatMap { $0.sessions }.filter { ids.contains($0.id) }
+        var failed = false
+        for session in targets {
+            do { try TrashManager.trash(session) }
+            catch { errorMessage = error.localizedDescription; failed = true }
+        }
+        for i in groups.indices {
+            groups[i].sessions.removeAll { ids.contains($0.id) }
+        }
+        groups.removeAll { $0.sessions.isEmpty }
+        Task { await loadTrash() }
+        if !failed { errorMessage = nil }
+    }
+
+    /// Start a brand-new Claude session in an internal terminal window.
+    func newSession(inDirectory dir: URL) {
+        TerminalManager.shared.newSession(inDirectory: dir)
     }
 
     /// Restore a trashed session, then refresh both lists.

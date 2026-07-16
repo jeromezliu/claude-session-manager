@@ -29,6 +29,32 @@ final class TerminalManager: ObservableObject {
         sessions[session.id] = terminal
     }
 
+    /// Start a brand-new Claude session (no --resume) in a floating window.
+    func newSession(inDirectory dir: URL) {
+        let id = "new-" + UUID().uuidString
+        let summary = SessionSummary(
+            id: id,
+            fileURL: dir.appendingPathComponent("\(id).jsonl"),
+            projectFolder: dir.lastPathComponent,
+            cwd: dir.path,
+            gitBranch: nil, claudeVersion: nil,
+            title: "New session · \(dir.lastPathComponent)",
+            firstPrompt: nil, lastPrompt: nil,
+            messageCount: 0, models: [], totalOutputTokens: 0,
+            createdAt: nil, lastActivityAt: nil, modifiedAt: Date(), fileSize: 0,
+            latestContextTokens: 0, contextWindow: 200_000)
+
+        let terminal = TerminalSession(session: summary, resume: false) { [weak self] id in
+            self?.observers[id] = nil
+            self?.sessions[id] = nil
+        }
+        observers[id] = terminal.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        sessions[id] = terminal
+        terminal.popOut()   // no list row to embed under yet
+    }
+
     func session(for id: String) -> TerminalSession? { sessions[id] }
 
     func end(_ id: String) { sessions[id]?.terminate() }

@@ -25,8 +25,22 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
     let totalOutputTokens: Int
 
     let createdAt: Date?
+    /// Timestamp of the last actual user/assistant message (not metadata) — used
+    /// to order the list by most-recent conversation, ignoring metadata touches.
+    let lastActivityAt: Date?
     let modifiedAt: Date
     let fileSize: Int
+
+    /// Approx context tokens used at the last turn (input + cache read/creation).
+    let latestContextTokens: Int
+    /// Model context window (tokens) for the session's model.
+    let contextWindow: Int
+
+    /// True when the session contains at least one real conversation turn.
+    var hasConversation: Bool { messageCount > 0 }
+
+    /// Best timestamp for sorting: last conversation, else file mtime.
+    var sortDate: Date { lastActivityAt ?? modifiedAt }
 
     /// A readable project name derived from the cwd (last path component).
     var projectName: String {
@@ -64,7 +78,8 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
             title: newTitle, firstPrompt: firstPrompt, lastPrompt: lastPrompt,
             messageCount: messageCount, models: models,
             totalOutputTokens: totalOutputTokens, createdAt: createdAt,
-            modifiedAt: modifiedAt, fileSize: fileSize
+            lastActivityAt: lastActivityAt, modifiedAt: modifiedAt, fileSize: fileSize,
+            latestContextTokens: latestContextTokens, contextWindow: contextWindow
         )
     }
 }

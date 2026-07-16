@@ -18,10 +18,12 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
 
     private var windowController: NSWindowController?
     private let onEnd: (String) -> Void
+    private let resume: Bool
 
-    init(session: SessionSummary, onEnd: @escaping (String) -> Void) {
+    init(session: SessionSummary, resume: Bool = true, onEnd: @escaping (String) -> Void) {
         self.id = session.id
         self.session = session
+        self.resume = resume
         self.onEnd = onEnd
         self.view = ActivityTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
         super.init()
@@ -61,8 +63,10 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
         let command: String
         if ProcessInfo.processInfo.environment["CSM_TERM_TEST"] == "1" {
             command = "echo '### internal terminal OK'; echo \"cwd=$PWD\"\n"
-        } else {
+        } else if resume {
             command = "claude --resume \(Self.shellQuote(session.id))\n"
+        } else {
+            command = "claude\n"   // brand-new session
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self, !self.hasExited else { return }
