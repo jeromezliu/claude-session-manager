@@ -2,11 +2,11 @@ cask "claude-session-manager" do
   version "1.0.0"
   sha256 "2b6322df4360ebd9127c816a738c5d4965015213d7ff243400ee486afd76f7db"
 
-  url "https://github.com/jeromeliu-tomtom/ClaudeSessionManager/releases/download/v#{version}/ClaudeSessionManager-v#{version}.zip",
-      verified: "github.com/jeromeliu-tomtom/ClaudeSessionManager/"
+  url "https://github.com/jeromezliu/claude-session-manager/releases/download/v#{version}/ClaudeSessionManager-v#{version}.zip",
+      verified: "github.com/jeromezliu/claude-session-manager/"
   name "Claude Session Manager"
   desc "Browse and manage local Claude Code sessions"
-  homepage "https://github.com/jeromeliu-tomtom/ClaudeSessionManager"
+  homepage "https://github.com/jeromezliu/claude-session-manager"
 
   livecheck do
     url :url
