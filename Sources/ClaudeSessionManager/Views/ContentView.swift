@@ -13,6 +13,8 @@ struct ContentView: View {
     @State private var purgeTarget: TrashEntry?
     @State private var confirmEmpty = false
     @State private var confirmDeleteSelection = false
+    /// Synthetic id of a just-created session shown embedded in the detail pane.
+    @State private var activeNewTerminal: String?
 
     var body: some View {
         NavigationSplitView {
@@ -24,7 +26,7 @@ struct ContentView: View {
         .searchable(text: $store.searchText, placement: .sidebar, prompt: "Search sessions")
         .toolbar { toolbarContent }
         .onChange(of: store.groups.count) { _ in autoSelectForSnapshot() }
-        .onAppear { maybeTerminalSnapshot() }
+        .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot() }
         .sheet(item: $renameTarget) { target in
             RenameSheet(session: target) { newTitle in
                 store.rename(target, to: newTitle)
@@ -285,6 +287,10 @@ struct ContentView: View {
                     TranscriptView(session: session, mode: .active,
                                    onContinue: { store.continueSession(session) })
                 }
+            } else if let id = activeNewTerminal,
+                      let terminal = terminals.session(for: id),
+                      !terminal.isPoppedOut {
+                TerminalPaneView(session: terminal)
             } else {
                 ContentUnavailableView_Compat(
                     title: "No session selected",
@@ -352,10 +358,16 @@ struct ContentView: View {
         ToolbarItemGroup {
             switch store.viewMode {
             case .sessions:
-                Button { startNewSession() } label: {
+                Menu {
+                    Button(store.newSessionDir) {}.disabled(true)
+                    Divider()
+                    Button("Choose Folder…") { chooseFolderAndStartNewSession() }
+                } label: {
                     Label("New Session", systemImage: "plus")
+                } primaryAction: {
+                    createNewSession(in: URL(fileURLWithPath: store.newSessionDir))
                 }
-                .help("Start a new Claude session in a folder")
+                .help("New session in \(store.newSessionDir) — click ⌄ to choose another folder")
 
                 if selectedSessions.count > 1 {
                     Button(role: .destructive) { confirmDeleteSelection = true } label: {
@@ -418,17 +430,40 @@ struct ContentView: View {
                 set: { if !$0 { target.wrappedValue = nil } })
     }
 
-    /// Start a new Claude session: pick a folder, then open a fresh terminal.
-    private func startNewSession() {
+    /// Dev-only: create a new session and snapshot the embedded detail pane.
+    private func maybeNewSessionSnapshot() {
+        guard let path = ProcessInfo.processInfo.environment["CSM_NEWSESSION_SNAP"], !path.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            createNewSession(in: URL(fileURLWithPath: NSHomeDirectory()))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                SelfSnapshot.captureKeyWindow(to: URL(fileURLWithPath: path))
+                if ProcessInfo.processInfo.environment["CSM_SNAPSHOT_QUIT"] == "1" { NSApp.terminate(nil) }
+            }
+        }
+    }
+
+    /// Start a new session in a folder and show it embedded in the detail pane.
+    private func createNewSession(in dir: URL) {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        let target = (fm.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue)
+            ? dir : URL(fileURLWithPath: NSHomeDirectory())
+        selectedSessions = []
+        activeNewTerminal = store.newSession(inDirectory: target)
+    }
+
+    /// Pick a folder (remembered as the new default), then start a session there.
+    private func chooseFolderAndStartNewSession() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Start Session"
         panel.message = "Choose the working directory for the new Claude session"
-        panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
+        panel.directoryURL = URL(fileURLWithPath: store.newSessionDir)
         if panel.runModal() == .OK, let url = panel.url {
-            store.newSession(inDirectory: url)
+            store.newSessionDir = url.path   // remember as the new default
+            createNewSession(in: url)
         }
     }
 

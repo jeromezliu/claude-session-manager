@@ -29,8 +29,10 @@ final class TerminalManager: ObservableObject {
         sessions[session.id] = terminal
     }
 
-    /// Start a brand-new Claude session (no --resume) in a floating window.
-    func newSession(inDirectory dir: URL) {
+    /// Start a brand-new Claude session (no --resume), embedded by default.
+    /// Returns the synthetic id so the caller can show it in the detail pane.
+    @discardableResult
+    func newSession(inDirectory dir: URL) -> String {
         let id = "new-" + UUID().uuidString
         let summary = SessionSummary(
             id: id,
@@ -52,7 +54,7 @@ final class TerminalManager: ObservableObject {
             self?.objectWillChange.send()
         }
         sessions[id] = terminal
-        terminal.popOut()   // no list row to embed under yet
+        return id
     }
 
     func session(for id: String) -> TerminalSession? { sessions[id] }

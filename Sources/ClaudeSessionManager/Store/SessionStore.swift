@@ -36,6 +36,16 @@ final class SessionStore: ObservableObject {
     /// Context-window limit used for token-usage display: "auto", "200k", "1m".
     @AppStorage("contextWindowMode") var contextWindowMode = "auto"
 
+    /// Default working directory for new sessions (remembered across launches).
+    @AppStorage("newSessionDir") var newSessionDir: String = SessionStore.defaultNewSessionDir
+
+    static var defaultNewSessionDir: String {
+        let ws = (NSHomeDirectory() as NSString).appendingPathComponent("Workspace")
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: ws, isDirectory: &isDir), isDir.boolValue { return ws }
+        return NSHomeDirectory()
+    }
+
     /// Root directory to scan. Persisted across launches.
     @AppStorage("rootPath") var rootPath: String = SessionStore.defaultRoot {
         didSet { Task { await reload() } }
@@ -214,8 +224,9 @@ final class SessionStore: ObservableObject {
         if !failed { errorMessage = nil }
     }
 
-    /// Start a brand-new Claude session in an internal terminal window.
-    func newSession(inDirectory dir: URL) {
+    /// Start a brand-new Claude session in an internal terminal. Returns its id.
+    @discardableResult
+    func newSession(inDirectory dir: URL) -> String {
         TerminalManager.shared.newSession(inDirectory: dir)
     }
 
