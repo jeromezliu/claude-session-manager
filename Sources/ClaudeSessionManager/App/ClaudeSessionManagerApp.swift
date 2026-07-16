@@ -5,7 +5,7 @@ struct ClaudeSessionManagerApp: App {
     @StateObject private var store = SessionStore()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("Claude Session Manager") {
             ContentView()
                 .environmentObject(store)
                 .frame(minWidth: 960, minHeight: 600)

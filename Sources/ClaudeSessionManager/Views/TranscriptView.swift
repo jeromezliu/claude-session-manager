@@ -51,7 +51,6 @@ struct TranscriptView: View {
                 }
             }
         }
-        .navigationTitle(session.title)
         .task(id: session.id) {
             await load()
             // Live-reload as the file grows (e.g. while resumed in the terminal).
