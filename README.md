@@ -6,6 +6,10 @@ sessions — the `.jsonl` transcripts stored under `~/.claude/projects`.
 Inspired by [universal-session-viewer](https://github.com/tad-hq/universal-session-viewer),
 but a genuinely native Mac app rather than a web viewer.
 
+![Claude Session Manager](docs/screenshot.png)
+
+> The screenshot uses mock data. Regenerate it with `swift docs/make-screenshot.swift docs/screenshot.png`.
+
 ## Features
 
 - **Browse** — sessions grouped by project (working directory), sorted by most
