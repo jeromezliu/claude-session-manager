@@ -286,7 +286,7 @@ struct ContentView: View {
             } else if let id = activeNewTerminal,
                       let terminal = terminals.session(for: id),
                       !terminal.isPoppedOut {
-                terminalSplit(summary: terminal.session, terminal: terminal)
+                terminalSplit(summary: terminal.displaySummary, terminal: terminal)
             } else {
                 ContentUnavailableView_Compat(
                     title: "No session selected",
