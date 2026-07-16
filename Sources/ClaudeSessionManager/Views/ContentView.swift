@@ -15,6 +15,8 @@ struct ContentView: View {
     @State private var confirmDeleteSelection = false
     /// Synthetic id of a just-created session shown embedded in the detail pane.
     @State private var activeNewTerminal: String?
+    /// Whether the embedded terminal fills the whole detail (hides transcript).
+    @State private var terminalMaximized = false
 
     var body: some View {
         NavigationSplitView {
@@ -26,6 +28,7 @@ struct ContentView: View {
         .searchable(text: $store.searchText, placement: .sidebar, prompt: "Search sessions")
         .toolbar { toolbarContent }
         .onChange(of: store.groups.count) { _ in autoSelectForSnapshot() }
+        .onChange(of: selectedSessions) { _ in terminalMaximized = false }
         .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot() }
         .sheet(item: $renameTarget) { target in
             RenameSheet(session: target) { newTitle in
@@ -276,12 +279,18 @@ struct ContentView: View {
             } else if let session = selectedSummary {
                 let terminal = terminals.session(for: session.id)
                 if let terminal, !terminal.isPoppedOut {
-                    VSplitView {
-                        TranscriptView(session: session, mode: .active,
-                                       onContinue: { store.continueSession(session) })
-                            .frame(minHeight: 180)
-                        TerminalPaneView(session: terminal)
-                            .frame(minHeight: 140)
+                    if terminalMaximized {
+                        TerminalPaneView(session: terminal, isMaximized: true,
+                                         onToggleMaximize: { terminalMaximized = false })
+                    } else {
+                        VSplitView {
+                            TranscriptView(session: session, mode: .active,
+                                           onContinue: { store.continueSession(session) })
+                                .frame(minHeight: 180)
+                            TerminalPaneView(session: terminal, isMaximized: false,
+                                             onToggleMaximize: { terminalMaximized = true })
+                                .frame(minHeight: 140)
+                        }
                     }
                 } else {
                     TranscriptView(session: session, mode: .active,

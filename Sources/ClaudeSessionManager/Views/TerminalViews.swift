@@ -35,12 +35,23 @@ struct TerminalContainer: NSViewRepresentable {
             terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         terminal.needsDisplay = true
+        // Focus the terminal so the user can type immediately (e.g. right after
+        // creating a new session), once it's in the window hierarchy.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            if terminal.superview === container {
+                container.window?.makeFirstResponder(terminal)
+            }
+        }
     }
 }
 
 /// Terminal shown inside the detail split, with a header to pop out or close.
 struct TerminalPaneView: View {
     @ObservedObject var session: TerminalSession
+
+    /// Provided when the pane can toggle full-height; nil hides the button.
+    var isMaximized: Bool = false
+    var onToggleMaximize: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,6 +62,15 @@ struct TerminalPaneView: View {
                     .foregroundStyle(.secondary)
                 ActivityDot(activity: session.activity)
                 Spacer()
+                if let onToggleMaximize {
+                    Button(action: onToggleMaximize) {
+                        Image(systemName: isMaximized
+                              ? "arrow.down.right.and.arrow.up.left"
+                              : "arrow.up.left.and.arrow.down.right")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(isMaximized ? "Show transcript" : "Expand terminal to full height")
+                }
                 Button { session.popOut() } label: {
                     Image(systemName: "macwindow.on.rectangle")
                 }
