@@ -333,8 +333,8 @@ struct ContentView: View {
                     .buttonStyle(.borderless).help("Refresh skills")
             }
         case .trash:
-            footerBar(summary: "\(store.trashEntries.count) in Trash", icon: "trash", path: TrashManager.directory.path) {
-                Button(role: .destructive) { confirmEmpty = true } label: { Image(systemName: "trash.slash") }
+            footerBar(summary: "\(store.trashEntries.count) in Trash", icon: "archivebox", path: TrashManager.directory.path) {
+                Button(role: .destructive) { confirmEmpty = true } label: { Image(systemName: "trash") }
                     .buttonStyle(.borderless)
                     .disabled(store.trashEntries.isEmpty)
                     .help("Empty Trash")
