@@ -21,14 +21,42 @@ final class SkillStore: ObservableObject {
 
     func load() {
         let dir = skillsDir
-        skills = Self.scan(dir).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        var all = Self.scan(dir, source: .personal)
+        all += Self.scanInstalledPlugins()
+        skills = all.sorted { a, b in
+            // personal first, then by name
+            if a.isManaged != b.isManaged { return !a.isManaged }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
     }
 
-    nonisolated static func scan(_ dir: URL) -> [SkillInfo] {
+    nonisolated static func scan(_ dir: URL, source: SkillSource) -> [SkillInfo] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return [] }
-        return entries.compactMap { SkillInfo.load(entry: $0) }
+        return entries.compactMap { SkillInfo.load(entry: $0, source: source) }
+    }
+
+    /// Skills from installed plugins, per ~/.claude/plugins/installed_plugins.json.
+    nonisolated static func scanInstalledPlugins() -> [SkillInfo] {
+        let fm = FileManager.default
+        let jsonURL = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".claude/plugins/installed_plugins.json")
+        guard let data = try? Data(contentsOf: jsonURL),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let plugins = root["plugins"] as? [String: Any] else { return [] }
+
+        var result: [SkillInfo] = []
+        for (key, value) in plugins {
+            let pluginName = String(key.split(separator: "@").first ?? Substring(key))
+            let entries = (value as? [[String: Any]]) ?? []
+            for entry in entries {
+                guard let installPath = entry["installPath"] as? String else { continue }
+                let skillsDir = URL(fileURLWithPath: installPath).appendingPathComponent("skills")
+                result += scan(skillsDir, source: .plugin(pluginName))
+            }
+        }
+        return result
     }
 
     // MARK: - Mutations
@@ -91,6 +119,10 @@ final class SkillStore: ObservableObject {
 
     /// Remove a skill: trash the folder, or (for a symlink) just remove the link.
     func remove(_ skill: SkillInfo) {
+        guard !skill.isManaged else {
+            errorMessage = "Plugin skills are managed by their plugin and can't be removed here."
+            return
+        }
         do {
             try FileManager.default.trashItem(at: skill.entryURL, resultingItemURL: nil)
         } catch {

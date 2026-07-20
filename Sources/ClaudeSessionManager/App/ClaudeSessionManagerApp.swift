@@ -12,8 +12,8 @@ struct ClaudeSessionManagerApp: App {
                 .environmentObject(skills)
                 .frame(minWidth: 960, minHeight: 600)
                 .task { await store.reload() }
-                .onAppear { skills.start() }
                 .onAppear {
+                    skills.start()
                     SelfSnapshot.runIfRequested()
                     SelfTest.runIfRequested()
                 }

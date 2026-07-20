@@ -227,11 +227,15 @@ struct ContentView: View {
                 SkillRow(skill: skill)
                     .tag(skill.id)
                     .contextMenu {
-                        Button("Edit SKILL.md") { skills.openInEditor(skill) }
-                        Button("Reveal in Finder") { skills.revealInFinder(skill) }
-                        Divider()
-                        Button(skill.isSymlink ? "Remove Link" : "Move to Trash", role: .destructive) {
-                            removeSkillTarget = skill
+                        if skill.isManaged {
+                            Button("Reveal in Finder") { skills.revealInFinder(skill) }
+                        } else {
+                            Button("Edit SKILL.md") { skills.openInEditor(skill) }
+                            Button("Reveal in Finder") { skills.revealInFinder(skill) }
+                            Divider()
+                            Button(skill.isSymlink ? "Remove Link" : "Move to Trash", role: .destructive) {
+                                removeSkillTarget = skill
+                            }
                         }
                     }
             }
@@ -528,12 +532,19 @@ struct ContentView: View {
                 .help("Create a new skill, or import an existing SKILL.md folder")
 
                 if let skill = selectedSkillInfo {
-                    Button { skills.openInEditor(skill) } label: {
-                        Label("Edit", systemImage: "pencil")
-                    }
-                    .help("Open SKILL.md in your editor")
-                    Button(role: .destructive) { removeSkillTarget = skill } label: {
-                        Label("Remove", systemImage: "trash")
+                    if skill.isManaged {
+                        Button { skills.revealInFinder(skill) } label: {
+                            Label("Reveal", systemImage: "folder")
+                        }
+                        .help("Plugin skill (read-only) — reveal in Finder")
+                    } else {
+                        Button { skills.openInEditor(skill) } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .help("Open SKILL.md in your editor")
+                        Button(role: .destructive) { removeSkillTarget = skill } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
                     }
                 }
             case .trash:
@@ -605,10 +616,10 @@ struct ContentView: View {
     /// Dev-only: open the Skills tab, select the first skill, and snapshot.
     private func maybeSkillsSnapshot() {
         guard let path = ProcessInfo.processInfo.environment["CSM_SKILLS_SNAP"], !path.isEmpty else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             store.viewMode = .skills
             selectedSkill = skills.skills.first?.id
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 SelfSnapshot.captureKeyWindow(to: URL(fileURLWithPath: path))
                 if ProcessInfo.processInfo.environment["CSM_SNAPSHOT_QUIT"] == "1" { NSApp.terminate(nil) }
             }

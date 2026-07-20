@@ -1,14 +1,21 @@
 import Foundation
 
-/// A Claude skill discovered under `~/.claude/skills` — a folder (or symlink to
-/// one) containing a `SKILL.md` with `name` / `description` frontmatter.
+/// Where a skill comes from: the user's own folder, or an installed plugin.
+enum SkillSource: Hashable, Sendable {
+    case personal
+    case plugin(String)   // plugin display name
+}
+
+/// A Claude skill discovered under `~/.claude/skills` (personal) or an installed
+/// plugin's `skills/` folder — a directory (or symlink) with a `SKILL.md`.
 struct SkillInfo: Identifiable, Hashable, Sendable {
     var id: String { entryURL.path }
 
     /// Display name (from frontmatter, else the folder name).
     let name: String
     let description: String
-    /// The entry directly under `~/.claude/skills` (may be a symlink).
+    let source: SkillSource
+    /// The entry directly under the skills directory (may be a symlink).
     let entryURL: URL
     /// The resolved `SKILL.md` file.
     let skillFileURL: URL
@@ -17,9 +24,14 @@ struct SkillInfo: Identifiable, Hashable, Sendable {
 
     var folderName: String { entryURL.lastPathComponent }
 
-    /// Parse a skill from an entry under the skills directory. Returns nil if it
+    /// Plugin skills are read-only (managed by the plugin, not this app).
+    var isManaged: Bool { if case .plugin = source { return true }; return false }
+
+    var pluginName: String? { if case .plugin(let p) = source { return p }; return nil }
+
+    /// Parse a skill from an entry under a skills directory. Returns nil if it
     /// isn't a skill (no SKILL.md).
-    static func load(entry: URL) -> SkillInfo? {
+    static func load(entry: URL, source: SkillSource = .personal) -> SkillInfo? {
         let fm = FileManager.default
         let attrs = try? fm.attributesOfItem(atPath: entry.path)
         let isLink = (attrs?[.type] as? FileAttributeType) == .typeSymbolicLink
@@ -33,6 +45,7 @@ struct SkillInfo: Identifiable, Hashable, Sendable {
         return SkillInfo(
             name: name?.isEmpty == false ? name! : entry.lastPathComponent,
             description: desc ?? "",
+            source: source,
             entryURL: entry,
             skillFileURL: skillFile,
             isSymlink: isLink,
