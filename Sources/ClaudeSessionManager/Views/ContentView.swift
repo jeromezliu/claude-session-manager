@@ -283,72 +283,62 @@ struct ContentView: View {
 
     // MARK: - Footer
 
+    /// One consistent two-row footer used by every tab so they stay aligned:
+    /// a summary line on top, then an icon + path with a trailing action.
+    @ViewBuilder
+    private func footerBar<Trailing: View>(
+        summary: String, icon: String, path: String, help: String = "",
+        @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+            Text(summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+                .help(help)
+            HStack(spacing: 6) {
+                Image(systemName: icon).foregroundStyle(.secondary)
+                Text(path)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .help(path)
+                Spacer()
+                trailing()
+            }
+            .frame(height: 18)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
+        }
+        .background(.bar)
+    }
+
     @ViewBuilder
     private var footer: some View {
         switch store.viewMode {
         case .sessions:
-            VStack(alignment: .leading, spacing: 6) {
-                Divider()
-                Text(sessionsCountLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 6)
-                    .help(store.hiddenCount > 0 && !store.showTemporarySessions
-                          ? "\(store.hiddenCount) temporary/analysis sessions are hidden. Toggle in the ⋯ menu."
-                          : "")
-                HStack(spacing: 6) {
-                    Image(systemName: "externaldrive").foregroundStyle(.secondary)
-                    Text(store.rootPath)
-                        .font(.caption2)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .help(store.rootPath)
-                    Spacer()
-                    Button { chooseRoot() } label: { Image(systemName: "pencil") }
-                        .buttonStyle(.borderless)
-                        .help("Change scan folder")
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 8)
+            footerBar(summary: sessionsCountLabel, icon: "externaldrive", path: store.rootPath,
+                      help: store.hiddenCount > 0 && !store.showTemporarySessions
+                            ? "\(store.hiddenCount) temporary/analysis sessions are hidden. Toggle in the ⋯ menu." : "") {
+                Button { chooseRoot() } label: { Image(systemName: "pencil") }
+                    .buttonStyle(.borderless).help("Change scan folder")
             }
-            .background(.bar)
         case .skills:
-            VStack(alignment: .leading, spacing: 6) {
-                Divider()
-                Text("\(skills.skills.count) skills")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(.horizontal, 10).padding(.top, 6)
-                HStack(spacing: 6) {
-                    Image(systemName: "wand.and.stars").foregroundStyle(.secondary)
-                    Text(skills.skillsDir.path)
-                        .font(.caption2).lineLimit(1).truncationMode(.head)
-                        .help(skills.skillsDir.path)
-                    Spacer()
-                    Button { skills.load() } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.borderless).help("Refresh skills")
-                }
-                .padding(.horizontal, 10).padding(.bottom, 8)
+            footerBar(summary: "\(skills.skills.count) skills", icon: "wand.and.stars", path: skills.skillsDir.path) {
+                Button { skills.load() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless).help("Refresh skills")
             }
-            .background(.bar)
         case .trash:
-            VStack(spacing: 6) {
-                Divider()
-                HStack {
-                    Text("\(store.trashEntries.count) in Trash")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button(role: .destructive) { confirmEmpty = true } label: {
-                        Label("Empty Trash", systemImage: "trash")
-                    }
-                    .controlSize(.small)
+            footerBar(summary: "\(store.trashEntries.count) in Trash", icon: "trash", path: TrashManager.directory.path) {
+                Button(role: .destructive) { confirmEmpty = true } label: { Image(systemName: "trash.slash") }
+                    .buttonStyle(.borderless)
                     .disabled(store.trashEntries.isEmpty)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                    .help("Empty Trash")
             }
-            .background(.bar)
         }
     }
 
