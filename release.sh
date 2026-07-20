@@ -64,8 +64,13 @@ echo "▶ Updating tap ${TAP_REPO}"
 mkdir -p "${TAP_DIR}/Casks"
 cp "$CASK" "${TAP_DIR}/Casks/"
 git -C "$TAP_DIR" add -A
-git -C "$TAP_DIR" commit -m "claude-session-manager ${VERSION}" >/dev/null 2>&1 || echo "  (tap already current)"
-git -C "$TAP_DIR" push origin HEAD:main
+if ! git -C "$TAP_DIR" diff --cached --quiet; then
+  git -C "$TAP_DIR" -c user.email="jeromezliu@users.noreply.github.com" -c user.name="jeromezliu" \
+      commit -m "claude-session-manager ${VERSION}"
+  git -C "$TAP_DIR" push origin HEAD:main
+else
+  echo "  (tap already current)"
+fi
 
 if [[ -n "${SYNC_PRIVATE_REMOTE:-}" ]]; then
   echo "▶ Syncing to ${SYNC_PRIVATE_REMOTE}"
