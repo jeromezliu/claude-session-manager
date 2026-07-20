@@ -137,18 +137,31 @@ struct ContentView: View {
 
     private var modeTabs: some View {
         VStack(spacing: 0) {
-            Picker("View", selection: $store.viewMode) {
-                Text("Sessions").tag(ViewMode.sessions)
-                Text("Skills\(skills.skills.isEmpty ? "" : " (\(skills.skills.count))")").tag(ViewMode.skills)
-                Text("Trash\(store.trashEntries.isEmpty ? "" : " (\(store.trashEntries.count))")").tag(ViewMode.trash)
+            HStack(spacing: 8) {
+                Picker("View", selection: $store.viewMode) {
+                    Text("Sessions").tag(ViewMode.sessions)
+                    Text("Skills\(skills.skills.isEmpty ? "" : " (\(skills.skills.count))")").tag(ViewMode.skills)
+                    Text("Trash\(store.trashEntries.isEmpty ? "" : " (\(store.trashEntries.count))")").tag(ViewMode.trash)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Button { refreshCurrentTab() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless)
+                    .help("Refresh")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             Divider()
         }
         .background(.bar)
+    }
+
+    private func refreshCurrentTab() {
+        switch store.viewMode {
+        case .sessions: Task { await store.reload() }
+        case .skills: skills.load()
+        case .trash: Task { await store.loadTrash() }
+        }
     }
 
     // MARK: - Sessions list (projects → sessions, sectioned)
@@ -287,8 +300,8 @@ struct ContentView: View {
     /// a summary line on top, then an icon + path with a trailing action.
     @ViewBuilder
     private func footerBar<Trailing: View>(
-        summary: String, icon: String, path: String, help: String = "",
-        @ViewBuilder trailing: () -> Trailing
+        summary: String, icon: String? = nil, path: String? = nil, help: String = "",
+        @ViewBuilder trailing: () -> Trailing = { EmptyView() }
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
@@ -300,13 +313,15 @@ struct ContentView: View {
                 .padding(.top, 6)
                 .help(help)
             HStack(spacing: 6) {
-                Image(systemName: icon).foregroundStyle(.secondary)
-                Text(path)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .help(path)
+                if let icon, let path {
+                    Image(systemName: icon).foregroundStyle(.secondary)
+                    Text(path)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                        .help(path)
+                }
                 Spacer()
                 trailing()
             }
@@ -328,12 +343,9 @@ struct ContentView: View {
                     .buttonStyle(.borderless).help("Change scan folder")
             }
         case .skills:
-            footerBar(summary: "\(skills.skills.count) skills", icon: "wand.and.stars", path: skills.skillsDir.path) {
-                Button { skills.load() } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless).help("Refresh skills")
-            }
+            footerBar(summary: "\(skills.skills.count) skills", icon: "wand.and.stars", path: skills.skillsDir.path)
         case .trash:
-            footerBar(summary: "\(store.trashEntries.count) in Trash", icon: "archivebox", path: TrashManager.directory.path) {
+            footerBar(summary: "\(store.trashEntries.count) in Trash") {
                 Button(role: .destructive) { confirmEmpty = true } label: { Image(systemName: "trash") }
                     .buttonStyle(.borderless)
                     .disabled(store.trashEntries.isEmpty)
@@ -559,10 +571,6 @@ struct ContentView: View {
                 Label("Options", systemImage: "ellipsis.circle")
             }
             .help("Options")
-
-            Button { Task { await store.reload() } } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
         }
     }
 
