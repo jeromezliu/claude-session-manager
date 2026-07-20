@@ -47,17 +47,15 @@ struct SkillDetailView: View {
     @State private var bodyText = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(skill.name).font(.title3.weight(.semibold)).lineLimit(1)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(skill.name).font(.title3.weight(.semibold))
                     Spacer()
                     if skill.isManaged {
                         Button(action: onReveal) { Label("Reveal", systemImage: "folder") }
-                            .help("Reveal SKILL.md in Finder")
                     } else {
                         Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
-                            .help("Open SKILL.md in your editor")
                         Button(role: .destructive, action: onRemove) { Label("Remove", systemImage: "trash") }
                     }
                 }
@@ -65,38 +63,32 @@ struct SkillDetailView: View {
                     Text(skill.description)
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                FlowChips(chips: chips)
-            }
-            .padding(16)
-            Divider()
-            ScrollView {
+                Text(sourceLabel)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
+
+                Divider().padding(.vertical, 4)
+
                 Text(bodyText.isEmpty ? "(no content)" : bodyText)
                     .font(.system(.callout, design: .monospaced))
                     .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
         }
         .task(id: skill.id) { await load() }
     }
 
-    private var chips: [String] {
-        var c: [String] = []
+    private var sourceLabel: String {
         switch skill.source {
         case .personal:
-            c.append(skill.folderName)
-            if skill.isSymlink {
-                c.append("symlink")
-                if let t = skill.symlinkTarget { c.append(t) }
-            }
+            if skill.isSymlink { return "\(skill.folderName)  ·  symlink → \(skill.symlinkTarget ?? "?")" }
+            return skill.folderName
         case .plugin(let p):
-            c.append("plugin: \(p)")
-            c.append("read-only")
+            return "plugin: \(p)  ·  read-only"
         }
-        return c
     }
 
     private func load() async {
