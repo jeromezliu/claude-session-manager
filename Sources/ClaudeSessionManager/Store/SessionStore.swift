@@ -11,6 +11,7 @@ struct ProjectGroup: Identifiable, Hashable {
 
 enum ViewMode: String, Hashable {
     case sessions
+    case skills
     case trash
 }
 

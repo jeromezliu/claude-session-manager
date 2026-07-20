@@ -3,9 +3,13 @@ import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var store: SessionStore
+    @EnvironmentObject var skills: SkillStore
     @ObservedObject private var terminals = TerminalManager.shared
 
     @State private var selectedSessions: Set<SessionSummary.ID> = []
+    @State private var selectedSkill: SkillInfo.ID?
+    @State private var showNewSkill = false
+    @State private var removeSkillTarget: SkillInfo?
     @State private var selectedTrash: TrashEntry.ID?
     @State private var collapsedProjects: Set<String> = []
     @State private var renameTarget: SessionSummary?
@@ -18,7 +22,7 @@ struct ContentView: View {
     /// Whether the embedded terminal fills the whole detail (hides transcript).
     @State private var terminalMaximized = false
 
-    var body: some View {
+    private var mainScene: some View {
         NavigationSplitView {
             sidebar
                 .frame(minWidth: 300)
@@ -34,7 +38,11 @@ struct ContentView: View {
             // the detail keeps showing the (still-running) terminal.
             if let newID, activeNewTerminal != nil { activeNewTerminal = newID }
         }
-        .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot() }
+        .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot(); maybeSkillsSnapshot() }
+    }
+
+    var body: some View {
+        mainScene
         .sheet(item: $renameTarget) { target in
             RenameSheet(session: target) { newTitle in
                 store.rename(target, to: newTitle)
@@ -77,12 +85,39 @@ struct ContentView: View {
         } message: {
             Text("Permanently delete all \(store.trashEntries.count) sessions in the Trash. This cannot be undone.")
         }
+        .alert("Remove skill?", isPresented: presenceBinding($removeSkillTarget), presenting: removeSkillTarget) { skill in
+            Button(skill.isSymlink ? "Remove Link" : "Move to Trash", role: .destructive) {
+                if selectedSkill == skill.id { selectedSkill = nil }
+                skills.remove(skill)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { skill in
+            Text(skill.isSymlink
+                 ? "Removes the symlink “\(skill.folderName)” (the target is left untouched)."
+                 : "“\(skill.name)” will be moved to the Trash.")
+        }
+        .sheet(isPresented: $showNewSkill) {
+            NewSkillSheet { name in
+                if let created = skills.createSkill(named: name) {
+                    store.viewMode = .skills
+                    selectedSkill = created.id
+                    skills.openInEditor(created)
+                }
+            }
+        }
         .alert("Something went wrong",
                isPresented: Binding(get: { store.errorMessage != nil },
                                     set: { if !$0 { store.errorMessage = nil } })) {
             Button("OK", role: .cancel) { store.errorMessage = nil }
         } message: {
             Text(store.errorMessage ?? "")
+        }
+        .alert("Skills",
+               isPresented: Binding(get: { skills.errorMessage != nil },
+                                    set: { if !$0 { skills.errorMessage = nil } })) {
+            Button("OK", role: .cancel) { skills.errorMessage = nil }
+        } message: {
+            Text(skills.errorMessage ?? "")
         }
     }
 
@@ -92,6 +127,7 @@ struct ContentView: View {
         Group {
             switch store.viewMode {
             case .sessions: sessionsList
+            case .skills: skillsList
             case .trash: trashList
             }
         }
@@ -103,6 +139,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             Picker("View", selection: $store.viewMode) {
                 Text("Sessions").tag(ViewMode.sessions)
+                Text("Skills\(skills.skills.isEmpty ? "" : " (\(skills.skills.count))")").tag(ViewMode.skills)
                 Text("Trash\(store.trashEntries.isEmpty ? "" : " (\(store.trashEntries.count))")").tag(ViewMode.trash)
             }
             .pickerStyle(.segmented)
@@ -174,6 +211,43 @@ struct ContentView: View {
         .help(group.path)
     }
 
+    // MARK: - Skills list
+
+    private var filteredSkills: [SkillInfo] {
+        let q = store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return skills.skills }
+        return skills.skills.filter {
+            $0.name.lowercased().contains(q) || $0.description.lowercased().contains(q)
+        }
+    }
+
+    private var skillsList: some View {
+        List(selection: $selectedSkill) {
+            ForEach(filteredSkills) { skill in
+                SkillRow(skill: skill)
+                    .tag(skill.id)
+                    .contextMenu {
+                        Button("Edit SKILL.md") { skills.openInEditor(skill) }
+                        Button("Reveal in Finder") { skills.revealInFinder(skill) }
+                        Divider()
+                        Button(skill.isSymlink ? "Remove Link" : "Move to Trash", role: .destructive) {
+                            removeSkillTarget = skill
+                        }
+                    }
+            }
+        }
+        .listStyle(.sidebar)
+        .overlay {
+            if skills.skills.isEmpty {
+                ContentUnavailableView_Compat(
+                    title: "No skills",
+                    systemImage: "wand.and.stars",
+                    message: "Add a skill with ＋, or drop one into ~/.claude/skills."
+                )
+            }
+        }
+    }
+
     // MARK: - Trash list
 
     private var trashList: some View {
@@ -233,6 +307,24 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
+            }
+            .background(.bar)
+        case .skills:
+            VStack(alignment: .leading, spacing: 6) {
+                Divider()
+                Text("\(skills.skills.count) skills")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal, 10).padding(.top, 6)
+                HStack(spacing: 6) {
+                    Image(systemName: "wand.and.stars").foregroundStyle(.secondary)
+                    Text(skills.skillsDir.path)
+                        .font(.caption2).lineLimit(1).truncationMode(.head)
+                        .help(skills.skillsDir.path)
+                    Spacer()
+                    Button { skills.load() } label: { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(.borderless).help("Refresh skills")
+                }
+                .padding(.horizontal, 10).padding(.bottom, 8)
             }
             .background(.bar)
         case .trash:
@@ -299,6 +391,19 @@ struct ContentView: View {
                     message: "Pick a session to read its transcript, or ⌘-click to select several."
                 )
             }
+        case .skills:
+            if let skill = selectedSkillInfo {
+                SkillDetailView(skill: skill,
+                                onEdit: { skills.openInEditor(skill) },
+                                onReveal: { skills.revealInFinder(skill) },
+                                onRemove: { removeSkillTarget = skill })
+            } else {
+                ContentUnavailableView_Compat(
+                    title: "No skill selected",
+                    systemImage: "wand.and.stars",
+                    message: "Pick a skill to view it, or add one with ＋."
+                )
+            }
         case .trash:
             if let entry = selectedTrashEntry {
                 TranscriptView(session: entry.summary, mode: .trashed,
@@ -313,6 +418,11 @@ struct ContentView: View {
                 )
             }
         }
+    }
+
+    private var selectedSkillInfo: SkillInfo? {
+        guard let id = selectedSkill else { return nil }
+        return skills.skills.first { $0.id == id }
     }
 
     /// Transcript-area + terminal in one stable split (terminal never reparented).
@@ -406,6 +516,26 @@ struct ContentView: View {
                         Label("Delete", systemImage: "trash")
                     }
                 }
+            case .skills:
+                Menu {
+                    Button("New Skill…") { showNewSkill = true }
+                    Button("Import Folder…") { importSkillFolder() }
+                } label: {
+                    Label("Add Skill", systemImage: "plus")
+                } primaryAction: {
+                    showNewSkill = true
+                }
+                .help("Create a new skill, or import an existing SKILL.md folder")
+
+                if let skill = selectedSkillInfo {
+                    Button { skills.openInEditor(skill) } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                    .help("Open SKILL.md in your editor")
+                    Button(role: .destructive) { removeSkillTarget = skill } label: {
+                        Label("Remove", systemImage: "trash")
+                    }
+                }
             case .trash:
                 if let entry = selectedTrashEntry {
                     Button { store.recover(entry); selectedTrash = nil } label: {
@@ -470,6 +600,35 @@ struct ContentView: View {
             ? dir : URL(fileURLWithPath: NSHomeDirectory())
         selectedSessions = []
         activeNewTerminal = store.newSession(inDirectory: target)
+    }
+
+    /// Dev-only: open the Skills tab, select the first skill, and snapshot.
+    private func maybeSkillsSnapshot() {
+        guard let path = ProcessInfo.processInfo.environment["CSM_SKILLS_SNAP"], !path.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            store.viewMode = .skills
+            selectedSkill = skills.skills.first?.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                SelfSnapshot.captureKeyWindow(to: URL(fileURLWithPath: path))
+                if ProcessInfo.processInfo.environment["CSM_SNAPSHOT_QUIT"] == "1" { NSApp.terminate(nil) }
+            }
+        }
+    }
+
+    /// Import an existing skill folder (containing SKILL.md) into ~/.claude/skills.
+    private func importSkillFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Import"
+        panel.message = "Choose a skill folder (must contain SKILL.md)"
+        if panel.runModal() == .OK, let url = panel.url {
+            if let created = skills.importSkill(from: url) {
+                store.viewMode = .skills
+                selectedSkill = created.id
+            }
+        }
     }
 
     /// Pick a folder (remembered as the new default), then start a session there.

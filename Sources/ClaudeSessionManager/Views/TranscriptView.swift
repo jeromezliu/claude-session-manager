@@ -266,7 +266,7 @@ private struct BlockView: View {
 }
 
 /// Simple wrapping row of small pill labels.
-private struct FlowChips: View {
+struct FlowChips: View {
     let chips: [String]
 
     var body: some View {
