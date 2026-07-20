@@ -29,6 +29,11 @@ struct ContentView: View {
         .toolbar { toolbarContent }
         .onChange(of: store.groups.count) { _ in autoSelectForSnapshot() }
         .onChange(of: selectedSessions) { _ in terminalMaximized = false }
+        .onChange(of: terminals.recentlyAdopted) { newID in
+            // A new session's terminal was re-keyed to its real id; follow it so
+            // the detail keeps showing the (still-running) terminal.
+            if let newID, activeNewTerminal != nil { activeNewTerminal = newID }
+        }
         .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot() }
         .sheet(item: $renameTarget) { target in
             RenameSheet(session: target) { newTitle in

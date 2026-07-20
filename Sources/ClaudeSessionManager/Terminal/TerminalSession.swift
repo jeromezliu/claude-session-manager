@@ -8,7 +8,9 @@ import SwiftTerm
 /// the underlying process, so it moves freely between the two.
 @MainActor
 final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalViewDelegate, NSWindowDelegate {
-    let id: String
+    /// The manager's key for this terminal. For a new session it starts as a
+    /// synthetic id and is re-keyed to the real session id once adopted.
+    var id: String
     let session: SessionSummary
     let view: ActivityTerminalView
     let activity = TerminalActivity()
@@ -24,13 +26,18 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
 
     private var windowController: NSWindowController?
     private let onEnd: (String) -> Void
+    /// Called when a new session's real file is detected: (oldID, realSummary).
+    private let onAdopt: ((String, SessionSummary) -> Void)?
     private let resume: Bool
     private var adoptAttempts = 0
 
-    init(session: SessionSummary, resume: Bool = true, onEnd: @escaping (String) -> Void) {
+    init(session: SessionSummary, resume: Bool = true,
+         onAdopt: ((String, SessionSummary) -> Void)? = nil,
+         onEnd: @escaping (String) -> Void) {
         self.id = session.id
         self.session = session
         self.resume = resume
+        self.onAdopt = onAdopt
         self.onEnd = onEnd
         self.view = ActivityTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
         super.init()
@@ -129,7 +136,9 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
         }
         // Adopt only once a real conversation turn exists (not just startup metadata).
         if let newest, let summary = SessionParser.summary(for: newest), summary.messageCount > 0 {
+            let oldID = id
             adoptedSummary = summary
+            onAdopt?(oldID, summary)   // let the manager re-key this terminal to the real id
             return
         }
 
