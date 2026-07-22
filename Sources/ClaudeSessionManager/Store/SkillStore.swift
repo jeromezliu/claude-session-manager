@@ -2,13 +2,22 @@ import Foundation
 import AppKit
 
 /// Manages Claude skills under `~/.claude/skills`: lists them, and supports
-/// creating, importing, and removing skills. Auto-refreshes on disk changes.
+/// creating, importing, and removing skills. Also lists each enabled remote
+/// host's skills from its rsync mirror (read-only). Auto-refreshes on disk
+/// changes.
 @MainActor
 final class SkillStore: ObservableObject {
     @Published var skills: [SkillInfo] = []
     @Published var errorMessage: String?
 
     private var watcher: DirectoryWatcher?
+    /// One watcher per enabled host's mirrored skills folder, keyed by host id.
+    private var remoteWatchers: [String: DirectoryWatcher] = [:]
+    private weak var remoteHosts: RemoteHostStore?
+
+    init(remoteHosts: RemoteHostStore? = nil) {
+        self.remoteHosts = remoteHosts
+    }
 
     var skillsDir: URL {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/skills")
@@ -23,10 +32,33 @@ final class SkillStore: ObservableObject {
         let dir = skillsDir
         var all = Self.scan(dir, source: .personal)
         all += Self.scanInstalledPlugins()
+        if let remoteHosts {
+            for host in remoteHosts.hosts where host.enabled {
+                all += Self.scan(remoteHosts.skillsCacheDir(for: host), source: .remote(host.displayName))
+            }
+        }
         skills = all.sorted { a, b in
-            // personal first, then by name
-            if a.isManaged != b.isManaged { return !a.isManaged }
+            // personal first, then plugin, then remote; by name within each
+            if a.sortRank != b.sortRank { return a.sortRank < b.sortRank }
             return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+        ensureRemoteWatchers()
+    }
+
+    /// Watch each enabled host's mirrored skills folder so the list refreshes
+    /// when a sync lands new or changed skills.
+    private func ensureRemoteWatchers() {
+        guard let remoteHosts else { return }
+        var wanted: [String: String] = [:]
+        for host in remoteHosts.hosts where host.enabled {
+            wanted[host.id] = remoteHosts.skillsCacheDir(for: host).path
+        }
+        for key in remoteWatchers.keys where wanted[key] == nil {
+            remoteWatchers[key] = nil
+        }
+        for (key, path) in wanted where remoteWatchers[key] == nil {
+            try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            remoteWatchers[key] = DirectoryWatcher(path: path) { [weak self] in self?.load() }
         }
     }
 
@@ -121,6 +153,10 @@ final class SkillStore: ObservableObject {
     func remove(_ skill: SkillInfo) {
         guard !skill.isManaged else {
             errorMessage = "Plugin skills are managed by their plugin and can't be removed here."
+            return
+        }
+        guard !skill.isRemote else {
+            errorMessage = "Remote skills are synced from their host — remove them there."
             return
         }
         do {

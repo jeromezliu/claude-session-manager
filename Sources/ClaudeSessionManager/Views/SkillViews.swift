@@ -4,6 +4,7 @@ struct SkillRow: View {
     let skill: SkillInfo
 
     private var icon: String {
+        if skill.isRemote { return "network" }
         if skill.isManaged { return "puzzlepiece.extension.fill" }
         return skill.isSymlink ? "link" : "wand.and.stars"
     }
@@ -19,6 +20,13 @@ struct SkillRow: View {
                     .lineLimit(1)
                 if let plugin = skill.pluginName {
                     Text(plugin)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.15), in: Capsule())
+                }
+                if let host = skill.hostName {
+                    Label(host, systemImage: "network")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 5).padding(.vertical, 1)
@@ -52,7 +60,7 @@ struct SkillDetailView: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(skill.name).font(.title3.weight(.semibold))
                     Spacer()
-                    if skill.isManaged {
+                    if skill.isReadOnly {
                         Button(action: onReveal) { Label("Reveal", systemImage: "folder") }
                     } else {
                         Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
@@ -88,6 +96,8 @@ struct SkillDetailView: View {
             return skill.folderName
         case .plugin(let p):
             return "plugin: \(p)  ·  read-only"
+        case .remote(let h):
+            return "remote: \(h)  ·  synced mirror, read-only — edit it on the host"
         }
     }
 

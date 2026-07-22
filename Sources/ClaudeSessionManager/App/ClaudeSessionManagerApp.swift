@@ -4,12 +4,13 @@ import SwiftUI
 struct ClaudeSessionManagerApp: App {
     @StateObject private var remoteHosts: RemoteHostStore
     @StateObject private var store: SessionStore
-    @StateObject private var skills = SkillStore()
+    @StateObject private var skills: SkillStore
 
     init() {
         let remoteHostStore = RemoteHostStore()
         _remoteHosts = StateObject(wrappedValue: remoteHostStore)
         _store = StateObject(wrappedValue: SessionStore(remoteHosts: remoteHostStore))
+        _skills = StateObject(wrappedValue: SkillStore(remoteHosts: remoteHostStore))
     }
 
     var body: some Scene {

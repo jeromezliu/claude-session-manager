@@ -26,9 +26,18 @@ struct ContentView: View {
     @State private var remoteNewSessionHost: RemoteHost?
 
     private var mainScene: some View {
+        GeometryReader { geo in
         NavigationSplitView {
             sidebar
-                .frame(minWidth: 300)
+                // Sized through the split view itself (a plain .frame(minWidth:)
+                // would pin the content's width and make the sidebar snap
+                // instead of sliding). The max is tied to the window width so
+                // the saved divider position always fits next to the detail —
+                // otherwise a narrow window expands the sidebar to whatever
+                // space is available and then jumps to the saved width.
+                .navigationSplitViewColumnWidth(
+                    min: 240, ideal: 320,
+                    max: max(280, min(520, geo.size.width - 560)))
         } detail: {
             detail
         }
@@ -36,13 +45,17 @@ struct ContentView: View {
         .toolbar { toolbarContent }
         .onChange(of: store.groups.count) { _ in autoSelectForSnapshot() }
         .onChange(of: selectedSessions) { _ in terminalMaximized = false }
-        .onChange(of: remoteHosts.hosts) { _ in Task { await store.reload() } }
+        .onChange(of: remoteHosts.hosts) { _ in
+            Task { await store.reload() }
+            skills.load()
+        }
         .onChange(of: terminals.recentlyAdopted) { newID in
             // A new session's terminal was re-keyed to its real id; follow it so
             // the detail keeps showing the (still-running) terminal.
             if let newID, activeNewTerminal != nil { activeNewTerminal = newID }
         }
         .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot(); maybeSkillsSnapshot() }
+        }
     }
 
     var body: some View {
@@ -234,6 +247,7 @@ struct ContentView: View {
                 Text("\(group.sessions.count)")
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .padding(.trailing, 8)
             }
             .contentShape(Rectangle())
         }
@@ -257,7 +271,7 @@ struct ContentView: View {
                 SkillRow(skill: skill)
                     .tag(skill.id)
                     .contextMenu {
-                        if skill.isManaged {
+                        if skill.isReadOnly {
                             Button("Reveal in Finder") { skills.revealInFinder(skill) }
                         } else {
                             Button("Edit SKILL.md") { skills.openInEditor(skill) }
@@ -313,38 +327,27 @@ struct ContentView: View {
 
     // MARK: - Footer
 
-    /// One consistent two-row footer used by every tab so they stay aligned:
-    /// a summary line on top, then an icon + path with a trailing action.
+    /// One consistent single-row footer used by every tab so they stay aligned:
+    /// a summary label on the left, an optional action on the right. Paths
+    /// (sessions root, skills folder) live in the ⋯ Options menu instead.
     @ViewBuilder
     private func footerBar<Trailing: View>(
-        summary: String, icon: String? = nil, path: String? = nil, help: String = "",
+        summary: String, help: String = "",
         @ViewBuilder trailing: () -> Trailing = { EmptyView() }
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(spacing: 0) {
             Divider()
-            Text(summary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .padding(.horizontal, 10)
-                .padding(.top, 6)
-                .help(help)
             HStack(spacing: 6) {
-                if let icon, let path {
-                    Image(systemName: icon).foregroundStyle(.secondary)
-                    Text(path)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .help(path)
-                }
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(help)
                 Spacer()
                 trailing()
             }
-            .frame(height: 18)
             .padding(.horizontal, 10)
-            .padding(.bottom, 8)
+            .frame(height: 28)
         }
         .background(.bar)
     }
@@ -353,14 +356,11 @@ struct ContentView: View {
     private var footer: some View {
         switch store.viewMode {
         case .sessions:
-            footerBar(summary: sessionsCountLabel, icon: "externaldrive", path: store.rootPath,
+            footerBar(summary: sessionsCountLabel,
                       help: store.hiddenCount > 0 && !store.showTemporarySessions
-                            ? "\(store.hiddenCount) temporary/analysis sessions are hidden. Toggle in the ⋯ menu." : "") {
-                Button { chooseRoot() } label: { Image(systemName: "pencil") }
-                    .buttonStyle(.borderless).help("Change scan folder")
-            }
+                            ? "\(store.hiddenCount) temporary/analysis sessions are hidden. Toggle in the ⋯ menu." : "")
         case .skills:
-            footerBar(summary: "\(skills.skills.count) skills", icon: "wand.and.stars", path: skills.skillsDir.path)
+            footerBar(summary: skillsCountLabel)
         case .trash:
             footerBar(summary: "\(store.trashEntries.count) in Trash") {
                 Button(role: .destructive) { confirmEmpty = true } label: { Image(systemName: "trash") }
@@ -557,11 +557,12 @@ struct ContentView: View {
                 .help("Create a new skill, or import an existing SKILL.md folder")
 
                 if let skill = selectedSkillInfo {
-                    if skill.isManaged {
+                    if skill.isReadOnly {
                         Button { skills.revealInFinder(skill) } label: {
                             Label("Reveal", systemImage: "folder")
                         }
-                        .help("Plugin skill (read-only) — reveal in Finder")
+                        .help(skill.isRemote ? "Remote skill (synced mirror) — reveal the local copy"
+                                             : "Plugin skill (read-only) — reveal in Finder")
                     } else {
                         Button { skills.openInEditor(skill) } label: {
                             Label("Edit", systemImage: "pencil")
@@ -590,6 +591,16 @@ struct ContentView: View {
                     Text("200K").tag("200k")
                     Text("1M").tag("1m")
                 }
+                Section("Sessions Folder") {
+                    Button(store.rootPath) {}.disabled(true)
+                    Button("Change…") { chooseRoot() }
+                }
+                Section("Skills Folder") {
+                    Button(skills.skillsDir.path) {}.disabled(true)
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([skills.skillsDir])
+                    }
+                }
                 Divider()
                 Button("Manage Remote Hosts…") { showRemoteHosts = true }
             } label: {
@@ -603,8 +614,21 @@ struct ContentView: View {
 
     private var sessionsCountLabel: String {
         var s = "\(store.filteredGroups.count) projects · \(store.totalSessions) sessions"
+        let remote = store.filteredGroups.flatMap { $0.sessions }.filter(\.isRemote).count
+        if remote > 0 {
+            s += " · \(remote) remote"
+        }
         if store.hiddenCount > 0 && !store.showTemporarySessions {
             s += " · \(store.hiddenCount) hidden"
+        }
+        return s
+    }
+
+    private var skillsCountLabel: String {
+        var s = "\(skills.skills.count) skills"
+        let remote = skills.skills.filter(\.isRemote).count
+        if remote > 0 {
+            s += " · \(remote) remote"
         }
         return s
     }

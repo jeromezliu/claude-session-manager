@@ -1,9 +1,11 @@
 import Foundation
 
-/// Where a skill comes from: the user's own folder, or an installed plugin.
+/// Where a skill comes from: the user's own folder, an installed plugin, or
+/// a remote host's mirrored skills folder.
 enum SkillSource: Hashable, Sendable {
     case personal
     case plugin(String)   // plugin display name
+    case remote(String)   // remote host display name
 }
 
 /// A Claude skill discovered under `~/.claude/skills` (personal) or an installed
@@ -27,7 +29,24 @@ struct SkillInfo: Identifiable, Hashable, Sendable {
     /// Plugin skills are read-only (managed by the plugin, not this app).
     var isManaged: Bool { if case .plugin = source { return true }; return false }
 
+    /// Remote skills are a synced mirror — edit them on the host itself.
+    var isRemote: Bool { if case .remote = source { return true }; return false }
+
+    /// True when the skill can't be edited/removed from this app.
+    var isReadOnly: Bool { isManaged || isRemote }
+
     var pluginName: String? { if case .plugin(let p) = source { return p }; return nil }
+
+    var hostName: String? { if case .remote(let h) = source { return h }; return nil }
+
+    /// List order: personal skills, then plugin, then remote.
+    var sortRank: Int {
+        switch source {
+        case .personal: return 0
+        case .plugin: return 1
+        case .remote: return 2
+        }
+    }
 
     /// Parse a skill from an entry under a skills directory. Returns nil if it
     /// isn't a skill (no SKILL.md).

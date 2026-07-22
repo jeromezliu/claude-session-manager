@@ -43,6 +43,20 @@ final class RemoteHostStore: ObservableObject {
         Self.cacheRoot.appendingPathComponent(host.id, isDirectory: true)
     }
 
+    /// Local mirror of the host's skills folder (kept separate from the
+    /// sessions mirror so the session scanner never walks into it).
+    func skillsCacheDir(for host: RemoteHost) -> URL {
+        Self.cacheRoot.appendingPathComponent("\(host.id)-skills", isDirectory: true)
+    }
+
+    /// The host's skills folder: sibling of the sessions root in the standard
+    /// ~/.claude layout, else the default location.
+    private static func remoteSkillsRoot(for host: RemoteHost) -> String {
+        host.remoteRoot.hasSuffix("/projects")
+            ? String(host.remoteRoot.dropLast("projects".count)) + "skills"
+            : "~/.claude/skills"
+    }
+
     // MARK: - Persistence
 
     private func load() {
@@ -100,6 +114,7 @@ final class RemoteHostStore: ObservableObject {
         SSHKeychain.deletePassword(for: host.id)
         save()
         try? FileManager.default.removeItem(at: localCacheDir(for: host))
+        try? FileManager.default.removeItem(at: skillsCacheDir(for: host))
     }
 
     private func validate(_ host: RemoteHost, ignoringID: String?) -> Bool {
@@ -149,6 +164,7 @@ final class RemoteHostStore: ObservableObject {
                 environment: RemoteShell.environment(for: host),
                 timeout: 120)
             if out.succeeded {
+                await syncSkills(host)
                 syncStatus[host.id] = HostSyncStatus(phase: .idle, lastSyncedAt: Date())
             } else {
                 let msg = out.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -159,6 +175,20 @@ final class RemoteHostStore: ObservableObject {
             syncStatus[host.id] = HostSyncStatus(phase: .failed(error.localizedDescription),
                                                   lastSyncedAt: syncStatus[host.id]?.lastSyncedAt)
         }
+    }
+
+    /// Best-effort mirror of the host's skills folder (`-L` follows symlinked
+    /// skills so their content arrives too). A host without one just yields
+    /// an empty mirror — never a sync failure.
+    private func syncSkills(_ host: RemoteHost) async {
+        let dest = skillsCacheDir(for: host)
+        try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        let remoteSpec = "\(host.destination):\(Self.remoteSkillsRoot(for: host))/"
+        _ = try? await RemoteShell.run(
+            "/usr/bin/rsync",
+            ["-azL", "--delete", "-e", RemoteShell.rsyncRemoteShell(for: host), remoteSpec, dest.path + "/"],
+            environment: RemoteShell.environment(for: host),
+            timeout: 60)
     }
 
     /// Scoped mirror of a single project subfolder — used while polling for a
