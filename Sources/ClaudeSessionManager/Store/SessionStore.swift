@@ -26,8 +26,14 @@ final class SessionStore: ObservableObject {
     /// Count of temp/ephemeral sessions excluded from the current scan.
     @Published var hiddenCount = 0
 
-    private var watcher: DirectoryWatcher?
-    private var watchedPath: String?
+    let remoteHostStore: RemoteHostStore
+    /// One watcher per root: "local" for `rootPath`, plus one keyed by alias
+    /// for each enabled remote host's mirrored cache dir.
+    private var watchers: [String: DirectoryWatcher] = [:]
+
+    init(remoteHosts: RemoteHostStore) {
+        self.remoteHostStore = remoteHosts
+    }
 
     /// Whether to include throwaway temp-dir sessions (analysis logs, etc.).
     @AppStorage("showTemporarySessions") var showTemporarySessions = false {
@@ -85,10 +91,12 @@ final class SessionStore: ObservableObject {
         errorMessage = nil
         let root = rootURL
         let includeTemp = showTemporarySessions
+        let remoteRoots = enabledRemoteRoots()
 
         let result: Result<ScanResult, Error> = await Task.detached(priority: .userInitiated) {
             do {
-                return .success(try Self.scan(root: root, includeTemp: includeTemp))
+                let local = try Self.scan(root: root, includeTemp: includeTemp)
+                return .success(Self.mergingRemotes(local, remoteRoots: remoteRoots, includeTemp: includeTemp))
             } catch {
                 return .failure(error)
             }
@@ -99,16 +107,58 @@ final class SessionStore: ObservableObject {
         case .failure(let e): errorMessage = e.localizedDescription; groups = []; hiddenCount = 0
         }
         await loadTrash()
-        ensureWatcher()
+        ensureWatchers()
         isLoading = false
     }
 
-    /// Watch the projects root so the list auto-refreshes when files change.
-    private func ensureWatcher() {
-        guard watchedPath != rootPath else { return }
-        watchedPath = rootPath
-        watcher = DirectoryWatcher(path: rootPath) { [weak self] in
-            Task { await self?.refreshQuietly() }
+    /// (alias, displayName, local mirror dir) for every enabled remote host.
+    private func enabledRemoteRoots() -> [(alias: String, displayName: String, cacheDir: URL)] {
+        remoteHostStore.hosts.filter { $0.enabled }.map {
+            (alias: $0.alias, displayName: $0.displayName, cacheDir: remoteHostStore.localCacheDir(for: $0))
+        }
+    }
+
+    /// Scan every enabled remote host's mirrored cache dir, tag the results
+    /// with that host's alias, and fold them into the local scan result.
+    /// A host that hasn't synced yet (cache dir missing/empty) just contributes nothing.
+    nonisolated private static func mergingRemotes(
+        _ local: ScanResult,
+        remoteRoots: [(alias: String, displayName: String, cacheDir: URL)],
+        includeTemp: Bool
+    ) -> ScanResult {
+        var groups = local.groups
+        var hidden = local.hidden
+        for r in remoteRoots {
+            guard let remote = try? Self.scan(root: r.cacheDir, includeTemp: includeTemp) else { continue }
+            let tagged = remote.groups.map { group -> ProjectGroup in
+                ProjectGroup(id: "\(r.alias):\(group.id)", name: group.name, path: group.path,
+                             sessions: group.sessions.map { $0.withRemote(alias: r.alias, displayName: r.displayName) })
+            }
+            groups += tagged
+            hidden += remote.hidden
+        }
+        groups.sort { ($0.sessions.first?.sortDate ?? .distantPast) > ($1.sessions.first?.sortDate ?? .distantPast) }
+        return ScanResult(groups: groups, hidden: hidden)
+    }
+
+    /// Watch every root (local + each enabled remote host's mirrored cache)
+    /// so the list auto-refreshes when files change. Cheap to call repeatedly —
+    /// only missing/stale watchers are (re)created.
+    private func ensureWatchers() {
+        var wanted: [String: String] = ["local": rootPath]
+        for r in enabledRemoteRoots() { wanted[r.alias] = r.cacheDir.path }
+
+        for key in watchers.keys where wanted[key] == nil {
+            watchers[key] = nil
+        }
+        for (key, path) in wanted where watchers[key] == nil {
+            // FSEvents needs the directory to exist before it can watch it —
+            // a remote host's cache dir may not exist yet on its first launch,
+            // ahead of that host's first sync.
+            try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            watchers[key] = DirectoryWatcher(path: path) { [weak self] in
+                Task { await self?.refreshQuietly() }
+            }
         }
     }
 
@@ -116,8 +166,10 @@ final class SessionStore: ObservableObject {
     func refreshQuietly() async {
         let root = rootURL
         let includeTemp = showTemporarySessions
+        let remoteRoots = enabledRemoteRoots()
         let result = await Task.detached(priority: .utility) {
-            try? Self.scan(root: root, includeTemp: includeTemp)
+            guard let local = try? Self.scan(root: root, includeTemp: includeTemp) else { return nil as ScanResult? }
+            return Self.mergingRemotes(local, remoteRoots: remoteRoots, includeTemp: includeTemp)
         }.value
         if let r = result {
             groups = r.groups
@@ -187,42 +239,48 @@ final class SessionStore: ObservableObject {
     // MARK: - Mutations
 
     func rename(_ session: SessionSummary, to title: String) {
-        do {
-            try SessionActions.rename(session, to: title)
-            updateSession(session.id) { $0 = $0.withTitle(title) }
-        } catch {
-            errorMessage = error.localizedDescription
+        Task {
+            do {
+                try await SessionActions.rename(session, to: title, remoteHostStore: remoteHostStore)
+                updateSession(session.id) { $0 = $0.withTitle(title) }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
     /// Move a session to the app-managed trash.
     func delete(_ session: SessionSummary) {
-        do {
-            try TrashManager.trash(session)
-            for i in groups.indices {
-                groups[i].sessions.removeAll { $0.id == session.id }
+        Task {
+            do {
+                try await TrashManager.trash(session, remoteHostStore: remoteHostStore)
+                for i in groups.indices {
+                    groups[i].sessions.removeAll { $0.id == session.id }
+                }
+                groups.removeAll { $0.sessions.isEmpty }
+                await loadTrash()
+            } catch {
+                errorMessage = error.localizedDescription
             }
-            groups.removeAll { $0.sessions.isEmpty }
-            Task { await loadTrash() }
-        } catch {
-            errorMessage = error.localizedDescription
         }
     }
 
     /// Move several sessions to the trash at once.
     func deleteMany(_ ids: Set<String>) {
         let targets = groups.flatMap { $0.sessions }.filter { ids.contains($0.id) }
-        var failed = false
-        for session in targets {
-            do { try TrashManager.trash(session) }
-            catch { errorMessage = error.localizedDescription; failed = true }
+        Task {
+            var failed = false
+            for session in targets {
+                do { try await TrashManager.trash(session, remoteHostStore: remoteHostStore) }
+                catch { errorMessage = error.localizedDescription; failed = true }
+            }
+            for i in groups.indices {
+                groups[i].sessions.removeAll { ids.contains($0.id) }
+            }
+            groups.removeAll { $0.sessions.isEmpty }
+            await loadTrash()
+            if !failed { errorMessage = nil }
         }
-        for i in groups.indices {
-            groups[i].sessions.removeAll { ids.contains($0.id) }
-        }
-        groups.removeAll { $0.sessions.isEmpty }
-        Task { await loadTrash() }
-        if !failed { errorMessage = nil }
     }
 
     /// Start a brand-new Claude session in an internal terminal. Returns its id.
@@ -231,14 +289,24 @@ final class SessionStore: ObservableObject {
         TerminalManager.shared.newSession(inDirectory: dir)
     }
 
+    /// Start a brand-new Claude session on a remote host, in an SSH-backed
+    /// internal terminal. `dir` is a path on the remote host (no local FS
+    /// browsing is possible there, so it's typed in by the user).
+    @discardableResult
+    func newSession(remoteDir dir: String, host: RemoteHost) -> String {
+        TerminalManager.shared.newSession(remoteDir: dir, host: host, hostStore: remoteHostStore)
+    }
+
     /// Restore a trashed session, then refresh both lists.
     func recover(_ entry: TrashEntry) {
-        do {
-            try TrashManager.recover(entry)
-            trashEntries.removeAll { $0.id == entry.id }
-            Task { await reload() }
-        } catch {
-            errorMessage = error.localizedDescription
+        Task {
+            do {
+                try await TrashManager.recover(entry, remoteHostStore: remoteHostStore)
+                trashEntries.removeAll { $0.id == entry.id }
+                await reload()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

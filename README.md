@@ -53,6 +53,8 @@ cd claude-session-manager
 
 - macOS 13 (Ventura) or later
 - The `claude` CLI on your `PATH` — required for the **Continue** feature
+- `ssh`/`rsync`/`scp` on your `PATH` and a working `~/.ssh/config` entry — only
+  needed for the **Remote hosts** feature
 - To build from source: the Swift toolchain (Xcode or Command Line Tools)
 
 ## Features
@@ -90,21 +92,31 @@ cd claude-session-manager
   *Show temporary sessions* toggle and a "N hidden" note in the footer.
 - **Configurable scan folder** — defaults to `~/.claude/projects`; point it at
   any folder and it finds every `.jsonl` beneath it. Remembered across launches.
+- **Remote hosts** — browse and manage Claude sessions on a remote/cloud-shell
+  machine reachable over SSH. Add a host by its `~/.ssh/config` alias (⋯ menu →
+  *Manage Remote Hosts…*); the app mirrors its `~/.claude/projects` into a local
+  cache via `rsync` and shows those sessions alongside local ones, tagged with
+  the host name. **Continue** opens an `ssh`-backed embedded terminal instead of
+  a local shell; **New Session** can start a fresh `claude` session in a
+  directory on the host; rename and delete/trash work the same as locally,
+  mutating the file on the host over SSH. Requires `ssh`/`rsync`/`scp` and a
+  working, password-less (key- or agent-based) connection to the host.
 
 ## Project layout
 
 ```
 Sources/ClaudeSessionManager/
   App/       @main entry, window, menus
-  Models/    SessionSummary, TranscriptEvent, TrashEntry (Sendable value types)
-  Store/     SessionParser  – JSONL → summaries / transcript
-             SessionStore   – scans root, holds state, mutations, auto-refresh
-             SummaryCache    – mtime/size-keyed parse cache
-             TrashManager    – app-managed trash (move / recover / purge)
+  Models/    SessionSummary, TranscriptEvent, TrashEntry, RemoteHost (Sendable value types)
+  Store/     SessionParser     – JSONL → summaries / transcript
+             SessionStore      – scans local + remote roots, mutations, auto-refresh
+             SummaryCache      – mtime/size-keyed parse cache
+             TrashManager      – app-managed trash (move / recover / purge)
+             RemoteHostStore   – remote host config, rsync mirroring, connection test
   Terminal/  TerminalSession, TerminalManager, TerminalActivity (SwiftTerm)
-  Util/      SessionActions, Formatters, FileWatcher, DirectoryWatcher
+  Util/      SessionActions, Formatters, FileWatcher, DirectoryWatcher, RemoteShell
   Views/     ContentView (2-pane split), SessionRow, TranscriptView,
-             TerminalViews, RenameSheet
+             TerminalViews, RenameSheet, RemoteHostViews
 Icon/        GenerateIcon.swift (CoreGraphics app-icon generator)
 docs/        make-screenshot.swift (README screenshot renderer)
 ```

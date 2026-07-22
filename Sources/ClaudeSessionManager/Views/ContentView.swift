@@ -4,6 +4,7 @@ import AppKit
 struct ContentView: View {
     @EnvironmentObject var store: SessionStore
     @EnvironmentObject var skills: SkillStore
+    @EnvironmentObject var remoteHosts: RemoteHostStore
     @ObservedObject private var terminals = TerminalManager.shared
 
     @State private var selectedSessions: Set<SessionSummary.ID> = []
@@ -21,6 +22,8 @@ struct ContentView: View {
     @State private var activeNewTerminal: String?
     /// Whether the embedded terminal fills the whole detail (hides transcript).
     @State private var terminalMaximized = false
+    @State private var showRemoteHosts = false
+    @State private var remoteNewSessionHost: RemoteHost?
 
     private var mainScene: some View {
         NavigationSplitView {
@@ -33,6 +36,7 @@ struct ContentView: View {
         .toolbar { toolbarContent }
         .onChange(of: store.groups.count) { _ in autoSelectForSnapshot() }
         .onChange(of: selectedSessions) { _ in terminalMaximized = false }
+        .onChange(of: remoteHosts.hosts) { _ in Task { await store.reload() } }
         .onChange(of: terminals.recentlyAdopted) { newID in
             // A new session's terminal was re-keyed to its real id; follow it so
             // the detail keeps showing the (still-running) terminal.
@@ -103,6 +107,15 @@ struct ContentView: View {
                     selectedSkill = created.id
                     skills.openInEditor(created)
                 }
+            }
+        }
+        .sheet(isPresented: $showRemoteHosts) {
+            RemoteHostsSheet()
+        }
+        .sheet(item: $remoteNewSessionHost) { host in
+            RemoteNewSessionSheet(host: host) { dir in
+                selectedSessions = []
+                activeNewTerminal = store.newSession(remoteDir: dir, host: host)
             }
         }
         .alert("Something went wrong",
@@ -211,6 +224,12 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                 Text(group.name)
                     .lineLimit(1)
+                if let host = group.sessions.first?.remoteDisplayName {
+                    Label(host, systemImage: "network")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .labelStyle(.titleAndIcon)
+                }
                 Spacer()
                 Text("\(group.sessions.count)")
                     .monospacedDigit()
@@ -496,12 +515,18 @@ struct ContentView: View {
                     Button(store.newSessionDir) {}.disabled(true)
                     Divider()
                     Button("Choose Folder…") { chooseFolderAndStartNewSession() }
+                    if !remoteHosts.hosts.filter({ $0.enabled }).isEmpty {
+                        Divider()
+                        ForEach(remoteHosts.hosts.filter { $0.enabled }) { host in
+                            Button("On \(host.displayName)…") { remoteNewSessionHost = host }
+                        }
+                    }
                 } label: {
                     Label("New Session", systemImage: "plus")
                 } primaryAction: {
                     createNewSession(in: URL(fileURLWithPath: store.newSessionDir))
                 }
-                .help("New session in \(store.newSessionDir) — click ⌄ to choose another folder")
+                .help("New session in \(store.newSessionDir) — click ⌄ to choose another folder, or start one on a remote host")
 
                 if selectedSessions.count > 1 {
                     Button(role: .destructive) { confirmDeleteSelection = true } label: {
@@ -565,6 +590,8 @@ struct ContentView: View {
                     Text("200K").tag("200k")
                     Text("1M").tag("1m")
                 }
+                Divider()
+                Button("Manage Remote Hosts…") { showRemoteHosts = true }
             } label: {
                 Label("Options", systemImage: "ellipsis.circle")
             }

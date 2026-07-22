@@ -19,8 +19,10 @@ enum SessionActions {
 
     /// Rename by appending a fresh `ai-title` event line — exactly what Claude Code
     /// does when it (re)generates a title. Last one wins, and the message DAG is
-    /// untouched, so resuming the session is unaffected.
-    static func rename(_ session: SessionSummary, to newTitle: String) throws {
+    /// untouched, so resuming the session is unaffected. For a remote session,
+    /// the event is appended on the host itself over SSH, then the mirror is
+    /// resynced so the change shows up locally.
+    static func rename(_ session: SessionSummary, to newTitle: String, remoteHostStore: RemoteHostStore? = nil) async throws {
         let title = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw ActionError.renameFailed("Title is empty.") }
 
@@ -29,9 +31,31 @@ enum SessionActions {
             "aiTitle": title,
             "sessionId": session.id
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: line, options: [.sortedKeys]) else {
+        guard let data = try? JSONSerialization.data(withJSONObject: line, options: [.sortedKeys]),
+              let jsonString = String(data: data, encoding: .utf8) else {
             throw ActionError.renameFailed("Could not encode title.")
         }
+
+        if let alias = session.remoteAlias {
+            guard let hostStore = remoteHostStore,
+                  let host = await hostStore.hosts.first(where: { $0.alias == alias }) else {
+                throw ActionError.renameFailed("Remote host “\(alias)” is no longer configured.")
+            }
+            let remotePath = "\(host.remoteRoot)/\(session.projectFolder)/\(session.id).jsonl"
+            let cmd = "printf '%s\\n' \(RemoteShell.shellQuote(jsonString)) >> \(RemoteShell.shellQuote(remotePath))"
+            let out: RemoteShell.Output
+            do {
+                out = try await RemoteShell.sshRun(alias: alias, remoteCommand: cmd)
+            } catch {
+                throw ActionError.renameFailed(error.localizedDescription)
+            }
+            guard out.succeeded else {
+                throw ActionError.renameFailed(out.stderr.isEmpty ? "ssh command failed" : out.stderr)
+            }
+            await hostStore.syncProjectFolder(host, session.projectFolder)
+            return
+        }
+
         var payload = data
         payload.append(0x0A) // newline
 
@@ -57,16 +81,27 @@ enum SessionActions {
     /// permission that an ad-hoc-signed app can't reliably obtain), and the
     /// script inherits PATH from the login shell so `claude` resolves.
     static func continueInClaude(_ session: SessionSummary) throws {
-        let dir = session.workingDirectory
-        let cdTarget = FileManager.default.fileExists(atPath: dir) ? dir : NSHomeDirectory()
-
-        let script = """
-        #!/bin/bash
-        cd \(shellQuote(cdTarget)) || exit 1
-        clear
-        echo "▶ Resuming Claude session \(session.id)"
-        exec claude --resume \(shellQuote(session.id))
-        """
+        let script: String
+        if let alias = session.remoteAlias {
+            let remoteCmd = "cd \(RemoteShell.shellQuote(session.workingDirectory)) 2>/dev/null; " +
+                            "claude --resume \(RemoteShell.shellQuote(session.id))"
+            script = """
+            #!/bin/bash
+            clear
+            echo "▶ Resuming Claude session \(session.id) on \(alias)"
+            exec ssh -t \(shellQuote(alias)) \(shellQuote(remoteCmd))
+            """
+        } else {
+            let dir = session.workingDirectory
+            let cdTarget = FileManager.default.fileExists(atPath: dir) ? dir : NSHomeDirectory()
+            script = """
+            #!/bin/bash
+            cd \(shellQuote(cdTarget)) || exit 1
+            clear
+            echo "▶ Resuming Claude session \(session.id)"
+            exec claude --resume \(shellQuote(session.id))
+            """
+        }
 
         let fm = FileManager.default
         let scriptURL = fm.temporaryDirectory

@@ -41,6 +41,9 @@ struct SessionRow: View {
                     if session.totalOutputTokens > 0 {
                         Label(Fmt.tokens(session.totalOutputTokens), systemImage: "cpu")
                     }
+                    if let host = session.remoteDisplayName {
+                        Label(host, systemImage: "network").lineLimit(1)
+                    }
                     Spacer()
                     Text(Fmt.relative(session.modifiedAt))
                 }
@@ -103,6 +106,9 @@ struct TrashRow: View {
                 .truncationMode(.head)
             HStack(spacing: 8) {
                 Label("\(entry.summary.messageCount)", systemImage: "bubble.left.and.bubble.right")
+                if let host = entry.remoteDisplayName {
+                    Label(host, systemImage: "network").lineLimit(1)
+                }
                 Spacer()
                 Label("deleted \(Fmt.relative(entry.deletedAt))", systemImage: "trash")
             }

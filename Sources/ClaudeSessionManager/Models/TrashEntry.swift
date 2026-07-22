@@ -10,6 +10,11 @@ struct TrashEntry: Identifiable, Hashable, Sendable {
     let metaURL: URL
     let originalPath: String
     let deletedAt: Date
+    /// Set when this was a remote session — its original was already removed
+    /// from the host at trash-time; recovering re-uploads it there.
+    var remoteAlias: String? = nil
+    var remoteDisplayName: String? = nil
+    var remoteRoot: String? = nil
 
     var originalFolder: String {
         (originalPath as NSString).deletingLastPathComponent
@@ -22,4 +27,7 @@ struct TrashMeta: Codable, Sendable {
     let projectFolder: String
     let title: String
     let deletedAt: Date
+    var remoteAlias: String? = nil
+    var remoteDisplayName: String? = nil
+    var remoteRoot: String? = nil
 }

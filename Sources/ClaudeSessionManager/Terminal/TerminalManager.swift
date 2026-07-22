@@ -63,6 +63,39 @@ final class TerminalManager: ObservableObject {
         return id
     }
 
+    /// Start a brand-new Claude session on a remote host (no --resume),
+    /// embedded by default. `dir` is a path on the remote host.
+    @discardableResult
+    func newSession(remoteDir dir: String, host: RemoteHost, hostStore: RemoteHostStore) -> String {
+        let id = "new-" + UUID().uuidString
+        let folderName = TerminalSession.encodedFolder(for: dir)
+        let summary = SessionSummary(
+            id: id,
+            fileURL: hostStore.localCacheDir(for: host).appendingPathComponent(folderName).appendingPathComponent("\(id).jsonl"),
+            projectFolder: folderName,
+            cwd: dir,
+            gitBranch: nil, claudeVersion: nil,
+            title: "New session · \(host.displayName)",
+            firstPrompt: nil, lastPrompt: nil,
+            messageCount: 0, models: [], totalOutputTokens: 0,
+            createdAt: nil, lastActivityAt: nil, modifiedAt: Date(), fileSize: 0,
+            latestContextTokens: 0, maxContextTokens: 0,
+            remoteAlias: host.alias, remoteDisplayName: host.displayName)
+
+        let terminal = TerminalSession(
+            session: summary, resume: false, newSessionHost: host, hostStore: hostStore,
+            onAdopt: { [weak self] oldID, real in self?.adopt(oldID: oldID, to: real) },
+            onEnd: { [weak self] id in
+                self?.observers[id] = nil
+                self?.sessions[id] = nil
+            })
+        observers[id] = terminal.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        sessions[id] = terminal
+        return id
+    }
+
     /// Re-key a new session's terminal from its synthetic id to the real session
     /// id Claude created, so the list row + activity indicator + selection all
     /// resolve to the same running terminal.
