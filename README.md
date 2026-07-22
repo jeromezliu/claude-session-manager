@@ -53,8 +53,8 @@ cd claude-session-manager
 
 - macOS 13 (Ventura) or later
 - The `claude` CLI on your `PATH` — required for the **Continue** feature
-- `ssh`/`rsync`/`scp` on your `PATH` and a working `~/.ssh/config` entry — only
-  needed for the **Remote hosts** feature
+- `ssh`/`rsync`/`scp` on your `PATH` — only needed for the **Remote hosts**
+  feature (connection details are configured in the app itself)
 - To build from source: the Swift toolchain (Xcode or Command Line Tools)
 
 ## Features
@@ -93,14 +93,17 @@ cd claude-session-manager
 - **Configurable scan folder** — defaults to `~/.claude/projects`; point it at
   any folder and it finds every `.jsonl` beneath it. Remembered across launches.
 - **Remote hosts** — browse and manage Claude sessions on a remote/cloud-shell
-  machine reachable over SSH. Add a host by its `~/.ssh/config` alias (⋯ menu →
-  *Manage Remote Hosts…*); the app mirrors its `~/.claude/projects` into a local
+  machine reachable over SSH. Configure a host entirely in-app (⋯ menu →
+  *Manage Remote Hosts…*): hostname/IP, port, username, and either a private
+  key / certificate file or a password. Passwords are stored in the macOS
+  Keychain (never on disk) and supplied to `ssh`/`rsync`/`scp` via an
+  `ssh-askpass` helper; key auth can also fall back to your default keys and
+  ssh-agent. The app mirrors each host's `~/.claude/projects` into a local
   cache via `rsync` and shows those sessions alongside local ones, tagged with
   the host name. **Continue** opens an `ssh`-backed embedded terminal instead of
   a local shell; **New Session** can start a fresh `claude` session in a
   directory on the host; rename and delete/trash work the same as locally,
-  mutating the file on the host over SSH. Requires `ssh`/`rsync`/`scp` and a
-  working, password-less (key- or agent-based) connection to the host.
+  mutating the file on the host over SSH. Requires `ssh`/`rsync`/`scp`.
 
 ## Project layout
 

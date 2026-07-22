@@ -45,18 +45,19 @@ enum TrashManager {
             counter += 1
         }
 
-        var remoteAlias: String?
+        var remoteHostID: String?
         var remoteDisplayName: String?
         var remoteRoot: String?
-        if let alias = session.remoteAlias, let hostStore = remoteHostStore,
-           let host = await hostStore.hosts.first(where: { $0.alias == alias }) {
+        if let hostID = session.remoteHostID, let hostStore = remoteHostStore,
+           let host = await hostStore.host(withID: hostID) {
             let remotePath = "\(host.remoteRoot)/\(session.projectFolder)/\(session.id).jsonl"
-            let out = try await RemoteShell.sshRun(alias: alias, remoteCommand: "rm \(RemoteShell.shellQuote(remotePath))")
+            // -f: don't fail if the remote copy is already gone (stale mirror).
+            let out = try await RemoteShell.sshRun(host: host, remoteCommand: "rm -f \(RemoteShell.quoteRemotePath(remotePath))")
             guard out.succeeded else {
                 throw NSError(domain: "ClaudeSessionManager", code: 4,
                               userInfo: [NSLocalizedDescriptionKey: out.stderr.isEmpty ? "Couldn't remove the remote file." : out.stderr])
             }
-            remoteAlias = alias
+            remoteHostID = hostID
             remoteDisplayName = host.displayName
             remoteRoot = host.remoteRoot
         }
@@ -67,7 +68,7 @@ enum TrashManager {
                              projectFolder: session.projectFolder,
                              title: session.title,
                              deletedAt: Date(),
-                             remoteAlias: remoteAlias,
+                             remoteHostID: remoteHostID,
                              remoteDisplayName: remoteDisplayName,
                              remoteRoot: remoteRoot)
         let metaURL = target.appendingPathExtension("meta")
@@ -95,13 +96,13 @@ enum TrashManager {
                 ?? SessionSummary.decodeFolder(summary.projectFolder) + "/" + url.lastPathComponent
             let deletedAt = meta?.deletedAt
                 ?? ((try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date(timeIntervalSince1970: 0))
-            if let alias = meta?.remoteAlias, let name = meta?.remoteDisplayName {
-                summary = summary.withRemote(alias: alias, displayName: name)
+            if let hostID = meta?.remoteHostID, let name = meta?.remoteDisplayName {
+                summary = summary.withRemote(hostID: hostID, displayName: name)
             }
 
             entries.append(TrashEntry(summary: summary, trashedURL: url, metaURL: metaURL,
                                       originalPath: originalPath, deletedAt: deletedAt,
-                                      remoteAlias: meta?.remoteAlias, remoteDisplayName: meta?.remoteDisplayName,
+                                      remoteHostID: meta?.remoteHostID, remoteDisplayName: meta?.remoteDisplayName,
                                       remoteRoot: meta?.remoteRoot))
         }
         return entries.sorted { $0.deletedAt > $1.deletedAt }
@@ -113,17 +114,16 @@ enum TrashManager {
     /// of moving it on the local filesystem.
     @discardableResult
     static func recover(_ entry: TrashEntry, remoteHostStore: RemoteHostStore? = nil) async throws -> URL {
-        if let alias = entry.remoteAlias, let root = entry.remoteRoot, let hostStore = remoteHostStore,
-           let host = await hostStore.hosts.first(where: { $0.alias == alias }) {
+        if let hostID = entry.remoteHostID, let root = entry.remoteRoot, let hostStore = remoteHostStore,
+           let host = await hostStore.host(withID: hostID) {
             let remotePath = "\(root)/\(entry.summary.projectFolder)/\(entry.summary.id).jsonl"
             let remoteDir = (remotePath as NSString).deletingLastPathComponent
-            let mkdir = try await RemoteShell.sshRun(alias: alias, remoteCommand: "mkdir -p \(RemoteShell.shellQuote(remoteDir))")
+            let mkdir = try await RemoteShell.sshRun(host: host, remoteCommand: "mkdir -p \(RemoteShell.quoteRemotePath(remoteDir))")
             guard mkdir.succeeded else {
                 throw NSError(domain: "ClaudeSessionManager", code: 5,
                               userInfo: [NSLocalizedDescriptionKey: mkdir.stderr.isEmpty ? "Couldn't prepare the remote folder." : mkdir.stderr])
             }
-            let scp = try await RemoteShell.run("/usr/bin/scp",
-                ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", entry.trashedURL.path, "\(alias):\(remotePath)"])
+            let scp = try await RemoteShell.scpUpload(host: host, localPath: entry.trashedURL.path, remotePath: remotePath)
             guard scp.succeeded else {
                 throw NSError(domain: "ClaudeSessionManager", code: 6,
                               userInfo: [NSLocalizedDescriptionKey: scp.stderr.isEmpty ? "Couldn't upload the session." : scp.stderr])

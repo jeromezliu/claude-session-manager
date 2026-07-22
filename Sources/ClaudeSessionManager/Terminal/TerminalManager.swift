@@ -13,6 +13,9 @@ final class TerminalManager: ObservableObject {
     /// so the UI can move its selection/active-terminal reference over.
     @Published private(set) var recentlyAdopted: String?
     private var observers: [String: AnyCancellable] = [:]
+    /// Injected once at startup (SessionStore.init) so remote-tagged sessions
+    /// can resolve their host config when a terminal is opened for them.
+    weak var hostStore: RemoteHostStore?
 
     /// Start (or focus) a terminal for a session. New terminals begin embedded.
     func continueSession(_ session: SessionSummary) {
@@ -20,7 +23,8 @@ final class TerminalManager: ObservableObject {
             existing.focus()
             return
         }
-        let terminal = TerminalSession(session: session) { [weak self] id in
+        let host = session.remoteHostID.flatMap { hostStore?.host(withID: $0) }
+        let terminal = TerminalSession(session: session, remoteHost: host) { [weak self] id in
             self?.observers[id] = nil
             self?.sessions[id] = nil
         }
@@ -80,7 +84,7 @@ final class TerminalManager: ObservableObject {
             messageCount: 0, models: [], totalOutputTokens: 0,
             createdAt: nil, lastActivityAt: nil, modifiedAt: Date(), fileSize: 0,
             latestContextTokens: 0, maxContextTokens: 0,
-            remoteAlias: host.alias, remoteDisplayName: host.displayName)
+            remoteHostID: host.id, remoteDisplayName: host.displayName)
 
         let terminal = TerminalSession(
             session: summary, resume: false, newSessionHost: host, hostStore: hostStore,

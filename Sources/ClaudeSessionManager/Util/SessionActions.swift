@@ -36,16 +36,16 @@ enum SessionActions {
             throw ActionError.renameFailed("Could not encode title.")
         }
 
-        if let alias = session.remoteAlias {
+        if let hostID = session.remoteHostID {
             guard let hostStore = remoteHostStore,
-                  let host = await hostStore.hosts.first(where: { $0.alias == alias }) else {
-                throw ActionError.renameFailed("Remote host “\(alias)” is no longer configured.")
+                  let host = await hostStore.host(withID: hostID) else {
+                throw ActionError.renameFailed("This session's remote host is no longer configured.")
             }
             let remotePath = "\(host.remoteRoot)/\(session.projectFolder)/\(session.id).jsonl"
-            let cmd = "printf '%s\\n' \(RemoteShell.shellQuote(jsonString)) >> \(RemoteShell.shellQuote(remotePath))"
+            let cmd = "printf '%s\\n' \(RemoteShell.shellQuote(jsonString)) >> \(RemoteShell.quoteRemotePath(remotePath))"
             let out: RemoteShell.Output
             do {
-                out = try await RemoteShell.sshRun(alias: alias, remoteCommand: cmd)
+                out = try await RemoteShell.sshRun(host: host, remoteCommand: cmd)
             } catch {
                 throw ActionError.renameFailed(error.localizedDescription)
             }
@@ -80,16 +80,23 @@ enum SessionActions {
     /// `/usr/bin/open`. This avoids sending Apple events (which need Automation
     /// permission that an ad-hoc-signed app can't reliably obtain), and the
     /// script inherits PATH from the login shell so `claude` resolves.
-    static func continueInClaude(_ session: SessionSummary) throws {
+    static func continueInClaude(_ session: SessionSummary, remoteHost: RemoteHost? = nil) throws {
         let script: String
-        if let alias = session.remoteAlias {
-            let remoteCmd = "cd \(RemoteShell.shellQuote(session.workingDirectory)) 2>/dev/null; " +
+        if session.isRemote {
+            guard let host = remoteHost else {
+                throw ActionError.launchFailed("This session's remote host is no longer configured.")
+            }
+            let remoteCmd = "cd \(RemoteShell.quoteRemotePath(session.workingDirectory)) 2>/dev/null; " +
                             "claude --resume \(RemoteShell.shellQuote(session.id))"
+            // Terminal.app gives ssh a real TTY, so password/passphrase auth
+            // just prompts there — no askpass plumbing needed for this path.
+            let sshArgs = RemoteShell.sshArgs(for: host, context: .interactive)
+                .map(shellQuote).joined(separator: " ")
             script = """
             #!/bin/bash
             clear
-            echo "▶ Resuming Claude session \(session.id) on \(alias)"
-            exec ssh -t \(shellQuote(alias)) \(shellQuote(remoteCmd))
+            echo "▶ Resuming Claude session \(session.id) on \(host.endpoint)"
+            exec ssh -t \(sshArgs) \(shellQuote(remoteCmd))
             """
         } else {
             let dir = session.workingDirectory

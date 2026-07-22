@@ -1,9 +1,10 @@
 import Foundation
 
-/// Manages configured remote (SSH) hosts: persists the host list, mirrors
-/// each host's projects folder into a local cache via `rsync` so the rest
-/// of the app (SessionParser, SummaryCache, TranscriptView) can treat a
-/// remote session exactly like a local one, and offers a connection test.
+/// Manages configured remote (SSH) hosts: persists the host list (passwords go
+/// to the Keychain, not the JSON), mirrors each host's projects folder into a
+/// local cache via `rsync` so the rest of the app (SessionParser, SummaryCache,
+/// TranscriptView) can treat a remote session exactly like a local one, and
+/// offers a connection test.
 @MainActor
 final class RemoteHostStore: ObservableObject {
     @Published var hosts: [RemoteHost] = []
@@ -34,8 +35,12 @@ final class RemoteHostStore: ObservableObject {
         startPeriodicSync()
     }
 
+    func host(withID id: String) -> RemoteHost? {
+        hosts.first { $0.id == id }
+    }
+
     func localCacheDir(for host: RemoteHost) -> URL {
-        Self.cacheRoot.appendingPathComponent(host.alias, isDirectory: true)
+        Self.cacheRoot.appendingPathComponent(host.id, isDirectory: true)
     }
 
     // MARK: - Persistence
@@ -59,41 +64,65 @@ final class RemoteHostStore: ObservableObject {
 
     // MARK: - Mutations
 
-    func addHost(alias: String, displayName: String, remoteRoot: String) {
-        let alias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !alias.isEmpty else { errorMessage = "Enter a host alias."; return }
-        guard !hosts.contains(where: { $0.alias == alias }) else {
-            errorMessage = "A host named “\(alias)” already exists."
-            return
-        }
-        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let root = remoteRoot.trimmingCharacters(in: .whitespacesAndNewlines)
-        let host = RemoteHost(alias: alias, displayName: name.isEmpty ? alias : name,
-                               remoteRoot: root.isEmpty ? "~/.claude/projects" : root)
+    /// Add a fully-configured host. A non-nil `password` is stored in the
+    /// Keychain under the host's id (only meaningful for `.password` auth).
+    func addHost(_ host: RemoteHost, password: String?) {
+        guard validate(host, ignoringID: nil) else { return }
         hosts.append(host)
+        if host.authMethod == .password, let password, !password.isEmpty {
+            SSHKeychain.setPassword(password, for: host.id)
+        }
         save()
+        errorMessage = nil
         Task { await sync(host) }
     }
 
-    func updateHost(_ host: RemoteHost) {
+    /// Update a host in place. `password == nil` leaves the stored password
+    /// untouched (so an edit sheet can keep its password field blank).
+    func updateHost(_ host: RemoteHost, password: String? = nil) {
         guard let i = hosts.firstIndex(where: { $0.id == host.id }) else { return }
+        guard validate(host, ignoringID: host.id) else { return }
         hosts[i] = host
+        if let password, !password.isEmpty, host.authMethod == .password {
+            SSHKeychain.setPassword(password, for: host.id)
+        }
+        if host.authMethod != .password {
+            SSHKeychain.deletePassword(for: host.id)
+        }
         save()
+        errorMessage = nil
         if host.enabled { Task { await sync(host) } }
     }
 
     func removeHost(_ host: RemoteHost) {
         hosts.removeAll { $0.id == host.id }
         syncStatus[host.id] = nil
+        SSHKeychain.deletePassword(for: host.id)
         save()
         try? FileManager.default.removeItem(at: localCacheDir(for: host))
+    }
+
+    private func validate(_ host: RemoteHost, ignoringID: String?) -> Bool {
+        guard !host.hostname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "Enter a hostname or IP address."
+            return false
+        }
+        guard (1...65535).contains(host.port) else {
+            errorMessage = "Port must be between 1 and 65535."
+            return false
+        }
+        if hosts.contains(where: { $0.id != ignoringID && $0.destination == host.destination && $0.port == host.port }) {
+            errorMessage = "A host for \(host.endpoint) already exists."
+            return false
+        }
+        return true
     }
 
     // MARK: - Connection test
 
     func testConnection(_ host: RemoteHost) async -> Result<Void, Error> {
         do {
-            let out = try await RemoteShell.sshRun(alias: host.alias, remoteCommand: "echo ok", timeout: 10)
+            let out = try await RemoteShell.sshRun(host: host, remoteCommand: "echo ok", timeout: 15)
             if out.succeeded && out.stdout.contains("ok") { return .success(()) }
             let msg = out.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             return .failure(NSError(domain: "ClaudeSessionManager", code: 2,
@@ -111,12 +140,13 @@ final class RemoteHostStore: ObservableObject {
         let dest = localCacheDir(for: host)
         try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
 
-        let remoteSpec = "\(host.alias):\(host.remoteRoot)/"
+        let remoteSpec = "\(host.destination):\(host.remoteRoot)/"
         do {
             let out = try await RemoteShell.run(
                 "/usr/bin/rsync",
-                ["-az", "--delete", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=10",
+                ["-az", "--delete", "-e", RemoteShell.rsyncRemoteShell(for: host),
                  remoteSpec, dest.path + "/"],
+                environment: RemoteShell.environment(for: host),
                 timeout: 120)
             if out.succeeded {
                 syncStatus[host.id] = HostSyncStatus(phase: .idle, lastSyncedAt: Date())
@@ -136,10 +166,11 @@ final class RemoteHostStore: ObservableObject {
     func syncProjectFolder(_ host: RemoteHost, _ encodedFolder: String) async {
         let dest = localCacheDir(for: host).appendingPathComponent(encodedFolder, isDirectory: true)
         try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-        let remoteSpec = "\(host.alias):\(host.remoteRoot)/\(encodedFolder)/"
+        let remoteSpec = "\(host.destination):\(host.remoteRoot)/\(encodedFolder)/"
         _ = try? await RemoteShell.run(
             "/usr/bin/rsync",
-            ["-az", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=10", remoteSpec, dest.path + "/"],
+            ["-az", "-e", RemoteShell.rsyncRemoteShell(for: host), remoteSpec, dest.path + "/"],
+            environment: RemoteShell.environment(for: host),
             timeout: 30)
     }
 

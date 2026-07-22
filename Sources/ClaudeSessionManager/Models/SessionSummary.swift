@@ -38,17 +38,17 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
     let maxContextTokens: Int
 
     /// Set once, when a scan tags a session as belonging to a remote host's
-    /// mirrored cache (nil for local sessions). `remoteAlias` matches
-    /// `RemoteHost.alias`, so a remote path can always be reconstructed as
+    /// mirrored cache (nil for local sessions). `remoteHostID` matches
+    /// `RemoteHost.id`, so a remote path can always be reconstructed as
     /// `<host.remoteRoot>/<projectFolder>/<id>.jsonl`.
-    var remoteAlias: String? = nil
+    var remoteHostID: String? = nil
     var remoteDisplayName: String? = nil
 
     /// True when the session contains at least one real conversation turn.
     var hasConversation: Bool { messageCount > 0 }
 
     /// True for a session mirrored from a remote (SSH) host.
-    var isRemote: Bool { remoteAlias != nil }
+    var isRemote: Bool { remoteHostID != nil }
 
     /// Best timestamp for sorting: last conversation, else file mtime.
     var sortDate: Date { lastActivityAt ?? modifiedAt }
@@ -100,9 +100,9 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
 
     /// A copy tagged as belonging to a remote host (applied once, by the scan
     /// that discovers it in that host's mirrored cache directory).
-    func withRemote(alias: String, displayName: String) -> SessionSummary {
+    func withRemote(hostID: String, displayName: String) -> SessionSummary {
         var copy = self
-        copy.remoteAlias = alias
+        copy.remoteHostID = hostID
         copy.remoteDisplayName = displayName
         return copy
     }

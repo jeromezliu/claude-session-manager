@@ -12,7 +12,7 @@ struct TrashEntry: Identifiable, Hashable, Sendable {
     let deletedAt: Date
     /// Set when this was a remote session — its original was already removed
     /// from the host at trash-time; recovering re-uploads it there.
-    var remoteAlias: String? = nil
+    var remoteHostID: String? = nil
     var remoteDisplayName: String? = nil
     var remoteRoot: String? = nil
 
@@ -27,7 +27,15 @@ struct TrashMeta: Codable, Sendable {
     let projectFolder: String
     let title: String
     let deletedAt: Date
-    var remoteAlias: String? = nil
+    var remoteHostID: String? = nil
     var remoteDisplayName: String? = nil
     var remoteRoot: String? = nil
+
+    /// Older sidecars stored the host reference under "remoteAlias"; legacy
+    /// hosts migrate with `id == alias`, so decoding it as the id still works.
+    private enum CodingKeys: String, CodingKey {
+        case originalPath, projectFolder, title, deletedAt
+        case remoteHostID = "remoteAlias"
+        case remoteDisplayName, remoteRoot
+    }
 }

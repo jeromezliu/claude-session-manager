@@ -27,12 +27,13 @@ final class SessionStore: ObservableObject {
     @Published var hiddenCount = 0
 
     let remoteHostStore: RemoteHostStore
-    /// One watcher per root: "local" for `rootPath`, plus one keyed by alias
+    /// One watcher per root: "local" for `rootPath`, plus one keyed by host id
     /// for each enabled remote host's mirrored cache dir.
     private var watchers: [String: DirectoryWatcher] = [:]
 
     init(remoteHosts: RemoteHostStore) {
         self.remoteHostStore = remoteHosts
+        TerminalManager.shared.hostStore = remoteHosts
     }
 
     /// Whether to include throwaway temp-dir sessions (analysis logs, etc.).
@@ -111,19 +112,19 @@ final class SessionStore: ObservableObject {
         isLoading = false
     }
 
-    /// (alias, displayName, local mirror dir) for every enabled remote host.
-    private func enabledRemoteRoots() -> [(alias: String, displayName: String, cacheDir: URL)] {
+    /// (host id, displayName, local mirror dir) for every enabled remote host.
+    private func enabledRemoteRoots() -> [(hostID: String, displayName: String, cacheDir: URL)] {
         remoteHostStore.hosts.filter { $0.enabled }.map {
-            (alias: $0.alias, displayName: $0.displayName, cacheDir: remoteHostStore.localCacheDir(for: $0))
+            (hostID: $0.id, displayName: $0.displayName, cacheDir: remoteHostStore.localCacheDir(for: $0))
         }
     }
 
     /// Scan every enabled remote host's mirrored cache dir, tag the results
-    /// with that host's alias, and fold them into the local scan result.
+    /// with that host's id, and fold them into the local scan result.
     /// A host that hasn't synced yet (cache dir missing/empty) just contributes nothing.
     nonisolated private static func mergingRemotes(
         _ local: ScanResult,
-        remoteRoots: [(alias: String, displayName: String, cacheDir: URL)],
+        remoteRoots: [(hostID: String, displayName: String, cacheDir: URL)],
         includeTemp: Bool
     ) -> ScanResult {
         var groups = local.groups
@@ -131,8 +132,8 @@ final class SessionStore: ObservableObject {
         for r in remoteRoots {
             guard let remote = try? Self.scan(root: r.cacheDir, includeTemp: includeTemp) else { continue }
             let tagged = remote.groups.map { group -> ProjectGroup in
-                ProjectGroup(id: "\(r.alias):\(group.id)", name: group.name, path: group.path,
-                             sessions: group.sessions.map { $0.withRemote(alias: r.alias, displayName: r.displayName) })
+                ProjectGroup(id: "\(r.hostID):\(group.id)", name: group.name, path: group.path,
+                             sessions: group.sessions.map { $0.withRemote(hostID: r.hostID, displayName: r.displayName) })
             }
             groups += tagged
             hidden += remote.hidden
@@ -146,7 +147,7 @@ final class SessionStore: ObservableObject {
     /// only missing/stale watchers are (re)created.
     private func ensureWatchers() {
         var wanted: [String: String] = ["local": rootPath]
-        for r in enabledRemoteRoots() { wanted[r.alias] = r.cacheDir.path }
+        for r in enabledRemoteRoots() { wanted[r.hostID] = r.cacheDir.path }
 
         for key in watchers.keys where wanted[key] == nil {
             watchers[key] = nil
@@ -203,6 +204,10 @@ final class SessionStore: ObservableObject {
                                   includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
                                   options: [.skipsHiddenFiles]) {
             for case let url as URL in en where url.pathExtension == "jsonl" {
+                // Skip subagent transcripts (<project>/<session-id>/subagents/
+                // agent-*.jsonl): they belong to a parent session and would
+                // otherwise show up as a duplicate project group of their own.
+                guard !url.pathComponents.contains("subagents") else { continue }
                 let vals = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                 files.append((url,
                               vals?.contentModificationDate ?? Date(timeIntervalSince1970: 0),
@@ -338,7 +343,8 @@ final class SessionStore: ObservableObject {
 
     /// Resume the session in the external Terminal.app instead.
     func openInExternalTerminal(_ session: SessionSummary) {
-        do { try SessionActions.continueInClaude(session) }
+        let host = session.remoteHostID.flatMap { remoteHostStore.host(withID: $0) }
+        do { try SessionActions.continueInClaude(session, remoteHost: host) }
         catch { errorMessage = error.localizedDescription }
     }
 
