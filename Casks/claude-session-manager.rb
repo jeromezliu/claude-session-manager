@@ -1,6 +1,6 @@
 cask "claude-session-manager" do
-  version "1.1.0"
-  sha256 "470246cf97338ba2ee48f6e1450bdea49859e52092aa029e0f24f404be24d4fc"
+  version "1.2.0"
+  sha256 "94f43f11898bccad081924ffa0e7b70c2c9e12d1ad80bbe2c5e735f893371b9e"
 
   url "https://github.com/jeromezliu/claude-session-manager/releases/download/v#{version}/ClaudeSessionManager-v#{version}.zip",
       verified: "github.com/jeromezliu/claude-session-manager/"
