@@ -63,8 +63,18 @@ else
     echo "  (AppIcon.icns not found — run: swift Icon/GenerateIcon.swift Icon/AppIcon.iconset && iconutil -c icns Icon/AppIcon.iconset -o Resources/AppIcon.icns)"
 fi
 
-# Ad-hoc signature so the GUI app launches without Gatekeeper complaints.
-codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || echo "  (codesign skipped)"
+# Prefer a real signing identity (CSM_SIGN_IDENTITY, or the first valid one
+# in the keychain): a stable identity keeps the Keychain's "Always Allow" for
+# stored SSH passwords working across rebuilds. Fall back to ad-hoc, which
+# still launches fine but counts as a "new app" to the Keychain every build.
+SIGN_ID="${CSM_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/"/{print $2; exit}')}"
+if [[ -n "$SIGN_ID" ]]; then
+    echo "▶ Signing as “${SIGN_ID}”…"
+    codesign --force --sign "$SIGN_ID" "$APP_DIR" >/dev/null 2>&1 \
+        || { echo "  (identity signing failed — falling back to ad-hoc)"; codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || true; }
+else
+    codesign --force --sign - "$APP_DIR" >/dev/null 2>&1 || echo "  (codesign skipped)"
+fi
 
 echo "✓ Built ${APP_DIR}"
 

@@ -30,13 +30,24 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
     private let onAdopt: ((String, SessionSummary) -> Void)?
     private let resume: Bool
     private var adoptAttempts = 0
+    /// The resolved host config for a remote-tagged session — supplies the
+    /// ssh destination, port, and auth for the PTY-backed `ssh` process.
+    private let remoteHost: RemoteHost?
+    /// Set only for a brand-new session on a remote host (`resume == false`);
+    /// used to poll for the session file via scoped rsync instead of local FS.
+    private let newSessionHost: RemoteHost?
+    private let hostStore: RemoteHostStore?
 
-    init(session: SessionSummary, resume: Bool = true,
+    init(session: SessionSummary, resume: Bool = true, remoteHost: RemoteHost? = nil,
+         newSessionHost: RemoteHost? = nil, hostStore: RemoteHostStore? = nil,
          onAdopt: ((String, SessionSummary) -> Void)? = nil,
          onEnd: @escaping (String) -> Void) {
         self.id = session.id
         self.session = session
         self.resume = resume
+        self.remoteHost = remoteHost ?? newSessionHost
+        self.newSessionHost = newSessionHost
+        self.hostStore = hostStore
         self.onAdopt = onAdopt
         self.onEnd = onEnd
         self.view = ActivityTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
@@ -50,7 +61,6 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
 
     private func start() {
         let fm = FileManager.default
-        let cwd = fm.fileExists(atPath: session.workingDirectory) ? session.workingDirectory : NSHomeDirectory()
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
 
         var envDict = ProcessInfo.processInfo.environment
@@ -69,29 +79,70 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
 
         envDict["TERM"] = "xterm-256color"
         envDict["COLORTERM"] = "truecolor"
-        let env = envDict.map { "\($0.key)=\($0.value)" }
-
-        view.startProcess(executable: shell, args: ["-l"], environment: env,
-                          execName: nil, currentDirectory: cwd)
 
         let command: String
-        if ProcessInfo.processInfo.environment["CSM_TERM_TEST"] == "1" {
-            command = "echo '### internal terminal OK'; echo \"cwd=$PWD\"\n"
-        } else if resume {
-            command = "claude --resume \(Self.shellQuote(session.id))\n"
+        let sendDelay: TimeInterval
+        let localAdoptionCwd: String
+
+        if session.isRemote {
+            guard let host = remoteHost else {
+                hasExited = true
+                view.feed(text: "\r\n\u{1b}[31mThis session's remote host is no longer configured.\u{1b}[0m\r\n")
+                return
+            }
+            // Remote: the PTY-backed process is `ssh` itself; `cd` into the
+            // remote cwd once connected instead of using `currentDirectory`
+            // (which only applies to the local ssh client process). Password
+            // auth is auto-answered from the Keychain via the askpass helper.
+            let envDict = RemoteShell.environment(for: host, base: envDict)
+            let env = envDict.map { "\($0.key)=\($0.value)" }
+            view.startProcess(executable: "/usr/bin/ssh",
+                              args: ["-t"] + RemoteShell.sshArgs(for: host, context: .interactive),
+                              environment: env,
+                              execName: nil, currentDirectory: NSHomeDirectory())
+            sendDelay = 1.5   // SSH handshake is slower than a local shell login
+            localAdoptionCwd = ""   // unused: remote adoption doesn't touch the local FS
+            if ProcessInfo.processInfo.environment["CSM_TERM_TEST"] == "1" {
+                command = "echo '### internal terminal OK'; echo \"cwd=$PWD\"\n"
+            } else if resume {
+                command = "cd \(RemoteShell.quoteRemotePath(session.workingDirectory)) 2>/dev/null; " +
+                          "claude --resume \(Self.shellQuote(session.id))\n"
+            } else {
+                // No 2>/dev/null here: if the typed directory doesn't exist,
+                // the user should see cd's error instead of Claude silently
+                // starting a session in the remote home directory.
+                command = "cd \(RemoteShell.quoteRemotePath(session.workingDirectory)) && claude\n"
+            }
         } else {
-            command = "claude\n"   // brand-new session
+            let env = envDict.map { "\($0.key)=\($0.value)" }
+            let cwd = fm.fileExists(atPath: session.workingDirectory) ? session.workingDirectory : NSHomeDirectory()
+            view.startProcess(executable: shell, args: ["-l"], environment: env,
+                              execName: nil, currentDirectory: cwd)
+            sendDelay = 0.6
+            localAdoptionCwd = cwd
+            if ProcessInfo.processInfo.environment["CSM_TERM_TEST"] == "1" {
+                command = "echo '### internal terminal OK'; echo \"cwd=$PWD\"\n"
+            } else if resume {
+                command = "claude --resume \(Self.shellQuote(session.id))\n"
+            } else {
+                command = "claude\n"   // brand-new session
+            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + sendDelay) { [weak self] in
             guard let self, !self.hasExited else { return }
             let bytes = Array(command.utf8)
             self.view.send(source: self.view, data: bytes[...])
         }
 
-        // For a brand-new session, watch the project folder for the real session
-        // file Claude creates, then adopt it so the detail shows the transcript.
+        // For a brand-new session, watch for the real session file Claude
+        // creates, then adopt it so the detail shows the transcript.
         if !resume && ProcessInfo.processInfo.environment["CSM_TERM_TEST"] != "1" {
-            beginAdoption(cwd: cwd)
+            if let host = newSessionHost, let hostStore {
+                beginAdoptionRemote(host: host, hostStore: hostStore, remoteDir: session.workingDirectory)
+            } else {
+                beginAdoption(cwd: localAdoptionCwd)
+            }
         }
     }
 
@@ -117,6 +168,60 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
     private static func jsonlIDs(in dir: URL) -> Set<String> {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
         return Set(files.filter { $0.pathExtension == "jsonl" }.map { $0.deletingPathExtension().lastPathComponent })
+    }
+
+    /// Remote counterpart of `beginAdoption`: there's no local FS to watch, so
+    /// each poll tick scoped-rsyncs the one project folder first, then checks
+    /// the mirrored copy with the exact same logic as the local path.
+    private func beginAdoptionRemote(host: RemoteHost, hostStore: RemoteHostStore, remoteDir: String) {
+        Task { [weak self] in
+            // Claude derives the projects folder name from the *absolute* cwd,
+            // so a typed `~/x` or relative path must be resolved on the host
+            // first — otherwise this would poll a folder that never appears.
+            var dir = remoteDir
+            if let out = try? await RemoteShell.sshRun(
+                    host: host,
+                    remoteCommand: "cd \(RemoteShell.quoteRemotePath(remoteDir)) && pwd"),
+               out.succeeded {
+                let resolved = out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !resolved.isEmpty { dir = resolved }
+            }
+            guard let self else { return }
+            let encoded = Self.encodedFolder(for: dir)
+            let localDir = hostStore.localCacheDir(for: host).appendingPathComponent(encoded, isDirectory: true)
+            let existing = Self.jsonlIDs(in: localDir)
+            await self.pollForAdoptionRemote(host: host, hostStore: hostStore, encodedFolder: encoded,
+                                             localDir: localDir, existing: existing)
+        }
+    }
+
+    private func pollForAdoptionRemote(host: RemoteHost, hostStore: RemoteHostStore, encodedFolder: String,
+                                        localDir: URL, existing: Set<String>) async {
+        var attempts = 0
+        while adoptedSummary == nil, !hasExited, attempts < 80 {
+            attempts += 1
+            await hostStore.syncProjectFolder(host, encodedFolder)
+
+            let fm = FileManager.default
+            let files = (try? fm.contentsOfDirectory(at: localDir,
+                                                     includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            let fresh = files.filter {
+                $0.pathExtension == "jsonl" && !existing.contains($0.deletingPathExtension().lastPathComponent)
+            }
+            let newest = fresh.max { a, b in
+                let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                return da < db
+            }
+            if let newest, let summary = SessionParser.summary(for: newest), summary.messageCount > 0 {
+                let oldID = id
+                let tagged = summary.withRemote(hostID: host.id, displayName: host.displayName)
+                adoptedSummary = tagged
+                onAdopt?(oldID, tagged)
+                return
+            }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+        }
     }
 
     private func pollForAdoption(projectDir: URL, existing: Set<String>) {

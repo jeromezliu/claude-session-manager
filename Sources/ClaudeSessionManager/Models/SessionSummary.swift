@@ -16,7 +16,7 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
     let claudeVersion: String?
 
     /// Best available human title: last `ai-title`, else first user prompt.
-    let title: String
+    var title: String
     let firstPrompt: String?
     let lastPrompt: String?
 
@@ -37,8 +37,18 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
     /// 1M-context session when it exceeds the 200k default).
     let maxContextTokens: Int
 
+    /// Set once, when a scan tags a session as belonging to a remote host's
+    /// mirrored cache (nil for local sessions). `remoteHostID` matches
+    /// `RemoteHost.id`, so a remote path can always be reconstructed as
+    /// `<host.remoteRoot>/<projectFolder>/<id>.jsonl`.
+    var remoteHostID: String? = nil
+    var remoteDisplayName: String? = nil
+
     /// True when the session contains at least one real conversation turn.
     var hasConversation: Bool { messageCount > 0 }
+
+    /// True for a session mirrored from a remote (SSH) host.
+    var isRemote: Bool { remoteHostID != nil }
 
     /// Best timestamp for sorting: last conversation, else file mtime.
     var sortDate: Date { lastActivityAt ?? modifiedAt }
@@ -83,14 +93,17 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
 
     /// A copy with a new title (used after rename / when restoring a stored title).
     func withTitle(_ newTitle: String) -> SessionSummary {
-        SessionSummary(
-            id: id, fileURL: fileURL, projectFolder: projectFolder,
-            cwd: cwd, gitBranch: gitBranch, claudeVersion: claudeVersion,
-            title: newTitle, firstPrompt: firstPrompt, lastPrompt: lastPrompt,
-            messageCount: messageCount, models: models,
-            totalOutputTokens: totalOutputTokens, createdAt: createdAt,
-            lastActivityAt: lastActivityAt, modifiedAt: modifiedAt, fileSize: fileSize,
-            latestContextTokens: latestContextTokens, maxContextTokens: maxContextTokens
-        )
+        var copy = self
+        copy.title = newTitle
+        return copy
+    }
+
+    /// A copy tagged as belonging to a remote host (applied once, by the scan
+    /// that discovers it in that host's mirrored cache directory).
+    func withRemote(hostID: String, displayName: String) -> SessionSummary {
+        var copy = self
+        copy.remoteHostID = hostID
+        copy.remoteDisplayName = displayName
+        return copy
     }
 }

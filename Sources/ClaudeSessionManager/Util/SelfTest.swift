@@ -7,15 +7,15 @@ import Foundation
 enum SelfTest {
     static func runIfRequested() {
         guard ProcessInfo.processInfo.environment["CSM_SELFTEST"] == "1" else { return }
-        DispatchQueue.global().async {
-            let log = run()
+        Task {
+            let log = await run()
             let out = ProcessInfo.processInfo.environment["CSM_SELFTEST_OUT"] ?? "/tmp/csm_selftest.txt"
             try? log.write(toFile: out, atomically: true, encoding: .utf8)
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+            await MainActor.run { NSApp.terminate(nil) }
         }
     }
 
-    private static func run() -> String {
+    private static func run() async -> String {
         var lines: [String] = []
         func check(_ name: String, _ ok: Bool) { lines.append("\(ok ? "PASS" : "FAIL") \(name)") }
 
@@ -41,7 +41,7 @@ enum SelfTest {
             check("parse-messageCount", summary.messageCount == 1)
 
             // 2. Trash
-            try TrashManager.trash(summary)
+            try await TrashManager.trash(summary)
             check("trash-original-removed", !fm.fileExists(atPath: fileURL.path))
 
             // 3. List
@@ -55,7 +55,7 @@ enum SelfTest {
             check("trash-title-preserved", entry.summary.title == "Self Test Session")
 
             // 4. Recover
-            let restored = try TrashManager.recover(entry)
+            let restored = try await TrashManager.recover(entry)
             check("recover-back-at-original", fm.fileExists(atPath: fileURL.path))
             check("recover-returns-original-path", restored.path == fileURL.path)
             check("recover-trash-file-gone", !fm.fileExists(atPath: entry.trashedURL.path))
@@ -65,7 +65,7 @@ enum SelfTest {
             guard let summary2 = SessionParser.summary(for: fileURL) else {
                 return (lines + ["FAIL reparse-after-recover"]).joined(separator: "\n")
             }
-            try TrashManager.trash(summary2)
+            try await TrashManager.trash(summary2)
             guard let entry2 = TrashManager.list().first(where: { $0.originalPath == fileURL.path }) else {
                 return (lines + ["FAIL retrash-list"]).joined(separator: "\n")
             }

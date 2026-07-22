@@ -31,8 +31,10 @@ enum TrashManager {
 
     // MARK: - Operations
 
-    /// Move a session into the trash, writing a `.meta` sidecar.
-    static func trash(_ session: SessionSummary) throws {
+    /// Move a session into the trash, writing a `.meta` sidecar. For a remote
+    /// session, this also removes the original from the host over SSH — the
+    /// file moved into Trash here is the already-mirrored local cache copy.
+    static func trash(_ session: SessionSummary, remoteHostStore: RemoteHostStore? = nil) async throws {
         try ensureDirectory()
         let fm = FileManager.default
 
@@ -43,12 +45,32 @@ enum TrashManager {
             counter += 1
         }
 
+        var remoteHostID: String?
+        var remoteDisplayName: String?
+        var remoteRoot: String?
+        if let hostID = session.remoteHostID, let hostStore = remoteHostStore,
+           let host = await hostStore.host(withID: hostID) {
+            let remotePath = "\(host.remoteRoot)/\(session.projectFolder)/\(session.id).jsonl"
+            // -f: don't fail if the remote copy is already gone (stale mirror).
+            let out = try await RemoteShell.sshRun(host: host, remoteCommand: "rm -f \(RemoteShell.quoteRemotePath(remotePath))")
+            guard out.succeeded else {
+                throw NSError(domain: "ClaudeSessionManager", code: 4,
+                              userInfo: [NSLocalizedDescriptionKey: out.stderr.isEmpty ? "Couldn't remove the remote file." : out.stderr])
+            }
+            remoteHostID = hostID
+            remoteDisplayName = host.displayName
+            remoteRoot = host.remoteRoot
+        }
+
         try fm.moveItem(at: session.fileURL, to: target)
 
         let meta = TrashMeta(originalPath: session.fileURL.path,
                              projectFolder: session.projectFolder,
                              title: session.title,
-                             deletedAt: Date())
+                             deletedAt: Date(),
+                             remoteHostID: remoteHostID,
+                             remoteDisplayName: remoteDisplayName,
+                             remoteRoot: remoteRoot)
         let metaURL = target.appendingPathExtension("meta")
         try encoder.encode(meta).write(to: metaURL)
     }
@@ -74,17 +96,44 @@ enum TrashManager {
                 ?? SessionSummary.decodeFolder(summary.projectFolder) + "/" + url.lastPathComponent
             let deletedAt = meta?.deletedAt
                 ?? ((try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date(timeIntervalSince1970: 0))
+            if let hostID = meta?.remoteHostID, let name = meta?.remoteDisplayName {
+                summary = summary.withRemote(hostID: hostID, displayName: name)
+            }
 
             entries.append(TrashEntry(summary: summary, trashedURL: url, metaURL: metaURL,
-                                      originalPath: originalPath, deletedAt: deletedAt))
+                                      originalPath: originalPath, deletedAt: deletedAt,
+                                      remoteHostID: meta?.remoteHostID, remoteDisplayName: meta?.remoteDisplayName,
+                                      remoteRoot: meta?.remoteRoot))
         }
         return entries.sorted { $0.deletedAt > $1.deletedAt }
     }
 
     /// Restore a trashed session to its original location. Returns the path it
-    /// was restored to (may differ if the original name was taken).
+    /// was restored to (may differ if the original name was taken). For a
+    /// remote session, this re-uploads the file to the host over `scp` instead
+    /// of moving it on the local filesystem.
     @discardableResult
-    static func recover(_ entry: TrashEntry) throws -> URL {
+    static func recover(_ entry: TrashEntry, remoteHostStore: RemoteHostStore? = nil) async throws -> URL {
+        if let hostID = entry.remoteHostID, let root = entry.remoteRoot, let hostStore = remoteHostStore,
+           let host = await hostStore.host(withID: hostID) {
+            let remotePath = "\(root)/\(entry.summary.projectFolder)/\(entry.summary.id).jsonl"
+            let remoteDir = (remotePath as NSString).deletingLastPathComponent
+            let mkdir = try await RemoteShell.sshRun(host: host, remoteCommand: "mkdir -p \(RemoteShell.quoteRemotePath(remoteDir))")
+            guard mkdir.succeeded else {
+                throw NSError(domain: "ClaudeSessionManager", code: 5,
+                              userInfo: [NSLocalizedDescriptionKey: mkdir.stderr.isEmpty ? "Couldn't prepare the remote folder." : mkdir.stderr])
+            }
+            let scp = try await RemoteShell.scpUpload(host: host, localPath: entry.trashedURL.path, remotePath: remotePath)
+            guard scp.succeeded else {
+                throw NSError(domain: "ClaudeSessionManager", code: 6,
+                              userInfo: [NSLocalizedDescriptionKey: scp.stderr.isEmpty ? "Couldn't upload the session." : scp.stderr])
+            }
+            try? FileManager.default.removeItem(at: entry.trashedURL)
+            try? FileManager.default.removeItem(at: entry.metaURL)
+            await hostStore.syncProjectFolder(host, entry.summary.projectFolder)
+            return URL(fileURLWithPath: remotePath)
+        }
+
         let fm = FileManager.default
         let original = URL(fileURLWithPath: entry.originalPath)
         try fm.createDirectory(at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
