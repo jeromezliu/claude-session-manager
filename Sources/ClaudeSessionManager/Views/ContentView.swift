@@ -541,10 +541,19 @@ struct ContentView: View {
                     }
                     .help("Move the selected sessions to Trash")
                 } else if let session = selectedSummary {
-                    Button { store.continueSession(session) } label: {
+                    Menu {
+                        Button { store.continueSession(session) } label: {
+                            Label("Continue in App", systemImage: "play.fill")
+                        }
+                        Button { store.openInExternalTerminal(session) } label: {
+                            Label("Open in Terminal.app", systemImage: "arrow.up.forward.app")
+                        }
+                    } label: {
                         Label("Continue", systemImage: "play.fill")
+                    } primaryAction: {
+                        store.continueSession(session)
                     }
-                    .help("Resume this session in an internal terminal")
+                    .help("Resume in an internal terminal — click ⌄ to use the external Terminal.app")
                     Button { renameTarget = session } label: {
                         Label("Rename", systemImage: "pencil")
                     }

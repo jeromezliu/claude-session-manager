@@ -98,11 +98,9 @@ struct TranscriptView: View {
     private var headerActions: some View {
         switch mode {
         case .active:
-            Button(action: onContinue) {
-                Label("Continue", systemImage: "play.fill")
-            }
-            .buttonStyle(.borderedProminent)
-            .help("Resume this session in an internal terminal")
+            // Continue lives in the toolbar (with the ⌄ external-terminal option);
+            // no separate button here to avoid duplicating it.
+            EmptyView()
         case .trashed:
             HStack(spacing: 8) {
                 Button(action: onRecover) {
