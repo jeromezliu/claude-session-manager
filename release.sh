@@ -61,6 +61,9 @@ gh release create "$TAG" --repo "$PUBLIC_REPO" --target main \
 
 echo "▶ Updating tap ${TAP_REPO}"
 mkdir -p "${TAP_DIR}/Casks"
+# Sync the tap mirror to its remote first — releases cut from another machine
+# can leave this local clone behind, which otherwise rejects the push.
+git -C "$TAP_DIR" fetch origin --quiet && git -C "$TAP_DIR" reset --hard origin/main --quiet
 cp "$CASK" "${TAP_DIR}/Casks/"
 git -C "$TAP_DIR" add -A
 if ! git -C "$TAP_DIR" diff --cached --quiet; then
