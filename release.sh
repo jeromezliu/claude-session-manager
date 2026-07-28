@@ -10,7 +10,6 @@
 #
 # Config via env (defaults suit this project):
 #   PUBLIC_REPO, PUBLIC_REMOTE, TAP_REPO, TAP_DIR, RELEASE_ACCT
-#   SYNC_PRIVATE_REMOTE  — if set (e.g. "origin"), also push there
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -18,7 +17,7 @@ VERSION="${1:?usage: ./release.sh <version>   (e.g. ./release.sh 1.1.0)}"
 TAG="v${VERSION}"
 
 PUBLIC_REPO="${PUBLIC_REPO:-jeromezliu/claude-session-manager}"
-PUBLIC_REMOTE="${PUBLIC_REMOTE:-public}"
+PUBLIC_REMOTE="${PUBLIC_REMOTE:-origin}"
 TAP_REPO="${TAP_REPO:-jeromezliu/homebrew-tap}"
 TAP_DIR="${TAP_DIR:-$HOME/Workspace/homebrew-tap}"
 RELEASE_ACCT="${RELEASE_ACCT:-jeromezliu}"
@@ -70,12 +69,6 @@ if ! git -C "$TAP_DIR" diff --cached --quiet; then
   git -C "$TAP_DIR" push origin HEAD:main
 else
   echo "  (tap already current)"
-fi
-
-if [[ -n "${SYNC_PRIVATE_REMOTE:-}" ]]; then
-  echo "▶ Syncing to ${SYNC_PRIVATE_REMOTE}"
-  restore_acct
-  git push "$SYNC_PRIVATE_REMOTE" HEAD:main || echo "  (private sync failed)"
 fi
 
 echo "✓ Released ${TAG}"
