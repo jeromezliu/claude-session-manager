@@ -198,13 +198,18 @@ struct ContentView: View {
                         ForEach(group.sessions) { session in
                             SessionRow(session: session)
                                 .tag(session.id)
-                                .contextMenu { rowMenu(session) }
                         }
                     }
                 } header: {
                     projectHeader(group)
                 }
             }
+        }
+        // Selection-aware menu: right-clicking inside a multi-selection keeps the
+        // whole selection (right-clicking an unselected row selects just it), so
+        // "Move N to Trash" acts on every selected session, not only the clicked one.
+        .contextMenu(forSelectionType: SessionSummary.ID.self) { ids in
+            rowMenu(for: ids)
         }
         .listStyle(.sidebar)
         .overlay {
@@ -489,21 +494,23 @@ struct ContentView: View {
     // MARK: - Menus & toolbar
 
     @ViewBuilder
-    private func rowMenu(_ session: SessionSummary) -> some View {
-        if selectedSessions.count > 1 && selectedSessions.contains(session.id) {
-            Button("Move \(selectedSessions.count) to Trash", role: .destructive) {
+    private func rowMenu(for ids: Set<SessionSummary.ID>) -> some View {
+        if ids.count > 1 {
+            // The List selection is already updated to `ids` before this builds,
+            // so the confirm alert acts on the full selection.
+            Button("Move \(ids.count) to Trash", role: .destructive) {
                 confirmDeleteSelection = true
             }
+        } else if let id = ids.first, let session = session(for: id) {
+            Button("Continue in Terminal") { store.continueSession(session) }
+            Button("Open in Terminal.app") { store.openInExternalTerminal(session) }
+            Button("Rename…") { renameTarget = session }
             Divider()
+            Button("Reveal in Finder") { SessionActions.revealInFinder(session) }
+            Button("Copy Session ID") { SessionActions.copySessionID(session) }
+            Divider()
+            Button("Move to Trash", role: .destructive) { deleteTarget = session }
         }
-        Button("Continue in Terminal") { store.continueSession(session) }
-        Button("Open in Terminal.app") { store.openInExternalTerminal(session) }
-        Button("Rename…") { renameTarget = session }
-        Divider()
-        Button("Reveal in Finder") { SessionActions.revealInFinder(session) }
-        Button("Copy Session ID") { SessionActions.copySessionID(session) }
-        Divider()
-        Button("Move to Trash", role: .destructive) { deleteTarget = session }
     }
 
     @ToolbarContentBuilder

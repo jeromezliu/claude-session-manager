@@ -24,7 +24,15 @@ struct TerminalContainer: NSViewRepresentable {
     /// with Auto Layout so it always fills regardless of when layout happens
     /// (fixes a 0×0 frame after being reparented from a window).
     private func attach(to container: NSView) {
-        guard isActive, terminal.superview !== container else { return }
+        guard isActive else { return }
+        // The container NSView is reused across sessions, so a previously-shown
+        // terminal can linger as a buried subview. Evict anything that isn't the
+        // one we want, otherwise switching back to an earlier session keeps
+        // showing the stacked-on-top view instead of this terminal.
+        for sub in container.subviews where sub !== terminal {
+            sub.removeFromSuperview()
+        }
+        guard terminal.superview !== container else { return }
         terminal.removeFromSuperview()
         terminal.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(terminal)
