@@ -6,6 +6,7 @@ struct ContentView: View {
     @EnvironmentObject var skills: SkillStore
     @EnvironmentObject var remoteHosts: RemoteHostStore
     @ObservedObject private var terminals = TerminalManager.shared
+    @ObservedObject private var conversations = ConversationManager.shared
 
     @State private var selectedSessions: Set<SessionSummary.ID> = []
     @State private var selectedSkill: SkillInfo.ID?
@@ -20,6 +21,8 @@ struct ContentView: View {
     @State private var confirmDeleteSelection = false
     /// Synthetic id of a just-created session shown embedded in the detail pane.
     @State private var activeNewTerminal: String?
+    /// A brand-new conversation (not yet a listed session) shown in the detail.
+    @State private var activeNewConversation: ConversationEngine?
     /// Whether the embedded terminal fills the whole detail (hides transcript).
     @State private var terminalMaximized = false
     @State private var showRemoteHosts = false
@@ -403,11 +406,21 @@ struct ContentView: View {
                 multiSelectionPanel
             } else if let session = selectedSummary {
                 if let terminal = terminals.session(for: session.id), !terminal.isPoppedOut {
+                    // The raw terminal takes over once the user explicitly opens it.
                     terminalSplit(summary: session, terminal: terminal)
                 } else {
-                    TranscriptView(session: session, mode: .active,
-                                   onContinue: { store.continueSession(session) })
+                    // Conversation is the default way to continue a session.
+                    ConversationView(engine: conversations.engine(for: session),
+                                     onOpenTerminal: { store.continueSession(session) },
+                                     availableModels: discoveredModels)
                 }
+            } else if let engine = activeNewConversation {
+                ConversationView(engine: engine, onOpenTerminal: {
+                    // Switch this new session over to a raw terminal instead.
+                    let dir = URL(fileURLWithPath: engine.session.workingDirectory)
+                    activeNewConversation = nil
+                    activeNewTerminal = store.newSession(inDirectory: dir)
+                }, availableModels: discoveredModels)
             } else if let id = activeNewTerminal,
                       let terminal = terminals.session(for: id),
                       !terminal.isPoppedOut {
@@ -446,6 +459,12 @@ struct ContentView: View {
                 )
             }
         }
+    }
+
+    /// Concrete model ids seen across scanned sessions (most recent first) —
+    /// offered in the conversation model picker alongside the CLI aliases.
+    private var discoveredModels: [String] {
+        ModelCatalog.discovered(from: store.groups)
     }
 
     private var selectedSkillInfo: SkillInfo? {
@@ -666,14 +685,15 @@ struct ContentView: View {
         }
     }
 
-    /// Start a new session in a folder and show it embedded in the detail pane.
+    /// Start a new session in a folder as a conversation shown in the detail pane.
     private func createNewSession(in dir: URL) {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         let target = (fm.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue)
             ? dir : URL(fileURLWithPath: NSHomeDirectory())
         selectedSessions = []
-        activeNewTerminal = store.newSession(inDirectory: target)
+        activeNewTerminal = nil
+        activeNewConversation = conversations.newConversation(inDirectory: target)
     }
 
     /// Dev-only: open the Skills tab, select the first skill, and snapshot.

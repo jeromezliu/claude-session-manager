@@ -157,7 +157,7 @@ struct TranscriptView: View {
 
 // MARK: - Event rendering
 
-private struct EventView: View {
+struct EventView: View {
     let event: TranscriptEvent
 
     var body: some View {
@@ -201,10 +201,8 @@ private struct BlockView: View {
     var body: some View {
         switch block {
         case .text(let t):
-            Text(t)
+            MarkdownText(text: t)
                 .font(.body)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
 
         case .thinking(let t):
             disclosure(title: "Thinking", systemImage: "brain", tint: .secondary) {

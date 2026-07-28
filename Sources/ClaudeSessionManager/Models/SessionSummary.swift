@@ -91,6 +91,17 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
         return tempRoots.contains { path.hasPrefix($0) }
     }
 
+    /// A placeholder summary for a brand-new conversation (no session file yet).
+    /// `id` is empty until the first turn creates the real session.
+    static func newDraft(cwd: String) -> SessionSummary {
+        SessionSummary(
+            id: "", fileURL: URL(fileURLWithPath: cwd), projectFolder: "", cwd: cwd,
+            gitBranch: nil, claudeVersion: nil, title: "New conversation",
+            firstPrompt: nil, lastPrompt: nil, messageCount: 0, models: [], totalOutputTokens: 0,
+            createdAt: nil, lastActivityAt: nil, modifiedAt: Date(), fileSize: 0,
+            latestContextTokens: 0, maxContextTokens: 0)
+    }
+
     /// A copy with a new title (used after rename / when restoring a stored title).
     func withTitle(_ newTitle: String) -> SessionSummary {
         var copy = self

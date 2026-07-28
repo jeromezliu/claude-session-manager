@@ -23,6 +23,7 @@ struct ClaudeSessionManagerApp: App {
                 .task { await store.reload() }
                 .onAppear {
                     skills.start()
+                    CLICapabilities.shared.start()
                     SelfSnapshot.runIfRequested()
                     SelfTest.runIfRequested()
                 }

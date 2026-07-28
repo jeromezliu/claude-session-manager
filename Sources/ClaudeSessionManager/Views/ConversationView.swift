@@ -1,0 +1,238 @@
+import SwiftUI
+
+/// Native chat UI for a session: streams turns from `ConversationEngine`,
+/// renders them with the same `EventView` the transcript uses, and offers an
+/// input box plus model / permission pickers docked at the bottom.
+struct ConversationView: View {
+    @ObservedObject var engine: ConversationEngine
+    var onOpenTerminal: () -> Void
+    /// Concrete model ids seen in the user's sessions (most recent first).
+    var availableModels: [String] = []
+
+    @ObservedObject private var capabilities = CLICapabilities.shared
+    @State private var input = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            messagesList
+            if let error = engine.errorText {
+                errorBar(error)
+            }
+            Divider()
+            bottomBar
+        }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(engine.session.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(engine.session.workingDirectory)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            Spacer()
+            Button { onOpenTerminal() } label: {
+                Image(systemName: "terminal")
+            }
+            .buttonStyle(.borderless)
+            .help("Open this session in the raw terminal instead")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    // MARK: - Messages
+
+    private var messagesList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if visibleMessages.isEmpty {
+                        Text("Send a message to start the conversation.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 40)
+                    }
+                    ForEach(visibleMessages) { event in
+                        EventView(event: event).id(event.id)
+                    }
+                    Color.clear.frame(height: 1).id(Self.bottomAnchor)
+                }
+                .padding(14)
+            }
+            .onChange(of: engine.messages.count) { _ in scrollToBottom(proxy) }
+            .onAppear { scrollToBottom(proxy, animated: false) }
+        }
+    }
+
+    private static let bottomAnchor = "conversation-bottom"
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
+            } else {
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            }
+        }
+    }
+
+    // MARK: - Activity banner
+
+    @ViewBuilder
+    private var activityBanner: some View {
+        if engine.isRunning {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(engine.phase.isEmpty ? "Working…" : engine.phase)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                if !engine.queued.isEmpty {
+                    Text("· \(engine.queued.count) queued")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(Self.elapsedLabel(engine.elapsed))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .background(Color.accentColor.opacity(0.10))
+        }
+    }
+
+    /// Discovered ids, plus the engine's current model if it's a concrete id —
+    /// a Picker with no tag matching its selection renders blank.
+    private var modelChoices: [String] {
+        var ids = availableModels
+        let current = engine.model
+        if !ids.contains(current), !ModelCatalog.aliases.contains(where: { $0.id == current }) {
+            ids.insert(current, at: 0)
+        }
+        return ids
+    }
+
+    /// Conversation mode always hides non-conversation activity (no toggle):
+    /// only real user/assistant prose shows, and tool/thinking blocks are
+    /// stripped from otherwise-visible turns. What Claude is *doing* is
+    /// reported by the activity banner instead, and the full detail stays
+    /// available in the transcript (terminal) view's eye toggle.
+    private var visibleMessages: [TranscriptEvent] {
+        engine.messages.compactMap { event in
+            let textOnly = event.blocks.filter {
+                if case .text = $0 { return true } else { return false }
+            }
+            guard !textOnly.isEmpty else { return nil }
+            return TranscriptEvent(id: event.id, kind: event.kind, timestamp: event.timestamp,
+                                   model: event.model, blocks: textOnly)
+        }
+    }
+
+    /// CLI-reported modes, plus the session's current mode if the installed CLI
+    /// no longer lists it — a Picker with no matching tag renders blank.
+    private var modeChoices: [String] {
+        var modes = capabilities.permissionModes
+        if !modes.contains(engine.permissionMode) {
+            modes.insert(engine.permissionMode, at: 0)
+        }
+        return modes
+    }
+
+    private static func elapsedLabel(_ t: TimeInterval) -> String {
+        let s = Int(t)
+        return s < 60 ? "\(s)s" : String(format: "%dm %02ds", s / 60, s % 60)
+    }
+
+    private func errorBar(_ error: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+            Text(error).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+            Spacer()
+            Button { engine.errorText = nil } label: { Image(systemName: "xmark") }
+                .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(.red.opacity(0.08))
+    }
+
+    // MARK: - Bottom bar (activity + input + pickers)
+
+    private var bottomBar: some View {
+        VStack(spacing: 8) {
+            activityBanner
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField(engine.isSupported ? "Message Claude…  (⌘↩ to send)"
+                                              : "Conversation mode is local-only",
+                          text: $input, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...8)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                    .disabled(!engine.isSupported)
+                    .onSubmit(sendIfPossible)
+
+                if engine.isRunning {
+                    Button(role: .destructive) { engine.stop() } label: {
+                        Image(systemName: "stop.fill")
+                    }
+                    .help("Stop the current turn")
+                }
+                Button(action: sendIfPossible) {
+                    Image(systemName: "arrow.up.circle.fill").font(.title2)
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!engine.isSupported || input.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.horizontal, 12)
+
+            HStack(spacing: 8) {
+                Picker("Model", selection: $engine.model) {
+                    ForEach(ModelCatalog.aliases, id: \.id) { Text($0.label).tag($0.id) }
+                    if !modelChoices.isEmpty {
+                        Divider()
+                        ForEach(modelChoices, id: \.self) { id in
+                            Text(ModelCatalog.label(for: id)).tag(id)
+                        }
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("Model for new turns — aliases track the latest release; below are models seen in your sessions")
+
+                Picker("Permissions", selection: $engine.permissionMode) {
+                    ForEach(modeChoices, id: \.self) { mode in
+                        Text(PermissionModeCatalog.label(for: mode)).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("How tool use is governed this turn")
+
+                Spacer()
+            }
+            .controlSize(.small)
+            .padding(.horizontal, 12)
+        }
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    private func sendIfPossible() {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, engine.isSupported else { return }
+        engine.send(text)
+        input = ""
+    }
+}
