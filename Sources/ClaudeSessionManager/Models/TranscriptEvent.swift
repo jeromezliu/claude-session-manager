@@ -14,6 +14,7 @@ struct TranscriptEvent: Identifiable, Hashable, Sendable {
         case system
         case attachment
         case meta        // mode / permission-mode / ai-title / last-prompt / snapshots
+        case shell       // local `!` shell-escape output (conversation mode)
 
         var label: String {
             switch self {
@@ -22,6 +23,7 @@ struct TranscriptEvent: Identifiable, Hashable, Sendable {
             case .system: return "System"
             case .attachment: return "Attachment"
             case .meta: return "Meta"
+            case .shell: return "Shell"
             }
         }
     }

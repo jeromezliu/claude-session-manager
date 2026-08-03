@@ -189,6 +189,7 @@ struct EventView: View {
         case .system: return .orange
         case .attachment: return .teal
         case .meta: return .gray
+        case .shell: return .secondary
         }
     }
 }

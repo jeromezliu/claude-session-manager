@@ -18,7 +18,8 @@ struct ChatTurnView: View {
     }
 
     var body: some View {
-        if isUser {
+        switch event.kind {
+        case .user:
             HStack {
                 Spacer(minLength: 40)
                 bubbleBody
@@ -28,13 +29,35 @@ struct ChatTurnView: View {
                                 in: RoundedRectangle(cornerRadius: DS.rBubble))
                     .frame(maxWidth: DS.userBubbleMaxWidth, alignment: .leading)
             }
-        } else {
+        case .shell:
+            shellOutput
+        default:
             VStack(alignment: .leading, spacing: 5) {
                 if showSpeaker { speaker }
                 bubbleBody
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// Output of a local `!` shell escape: a monospace block, captioned "Shell",
+    /// with no "Claude" attribution since the model wasn't involved.
+    private var shellOutput: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label("Shell", systemImage: "terminal")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(texts.joined(separator: "\n"))
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(10)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.secondary.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: DS.rInline))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var speaker: some View {

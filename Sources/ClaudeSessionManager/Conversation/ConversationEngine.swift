@@ -89,6 +89,14 @@ final class ConversationEngine: ObservableObject, Identifiable {
             errorText = "Conversation mode is local-only. Use the terminal for remote sessions."
             return
         }
+        // `!command` is a local shell escape (like the interactive CLI): run it
+        // in the session's directory and show the output directly, instead of
+        // routing it through the model (whose Bash-tool output the chat hides).
+        if prompt.hasPrefix("!") {
+            let cmd = String(prompt.dropFirst()).trimmingCharacters(in: .whitespaces)
+            if !cmd.isEmpty { runLocalShell(cmd) }
+            return
+        }
         append(kind: .user, blocks: [.text(prompt)])
         if isRunning {
             queued.append(prompt)          // chain behind the running turn
@@ -265,6 +273,42 @@ final class ConversationEngine: ObservableObject, Identifiable {
             parts.append(String(format: "$%.4f", cost))
         }
         return parts.isEmpty ? "done" : "done · " + parts.joined(separator: " · ")
+    }
+
+    // MARK: - Local shell escape (`!cmd`)
+
+    private func runLocalShell(_ cmd: String) {
+        append(kind: .user, blocks: [.text("! " + cmd)])
+        let dir = workingDir
+        Task.detached(priority: .userInitiated) {
+            let output = Self.runShell(cmd, cwd: dir)
+            await MainActor.run { self.append(kind: .shell, blocks: [.text(output)]) }
+        }
+    }
+
+    /// Run one shell command via the login shell (so PATH/aliases resolve),
+    /// returning combined stdout+stderr with a trailing exit-code note on
+    /// failure. Reads the pipe to EOF before waiting, so large output can't
+    /// deadlock the process.
+    nonisolated static func runShell(_ cmd: String, cwd: String) -> String {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: shell)
+        p.arguments = ["-lc", cmd]
+        p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        do { try p.run() } catch { return "failed to run: \(error.localizedDescription)" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        var out = (String(data: data, encoding: .utf8) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if p.terminationStatus != 0 {
+            let note = "[exit \(p.terminationStatus)]"
+            out = out.isEmpty ? note : out + "\n" + note
+        }
+        return out.isEmpty ? "(no output)" : out
     }
 
     private func append(kind: TranscriptEvent.Kind, blocks: [TranscriptEvent.Block], model: String? = nil) {

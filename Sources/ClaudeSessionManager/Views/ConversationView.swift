@@ -203,10 +203,8 @@ struct ConversationView: View {
     private var bottomBar: some View {
         VStack(spacing: 8) {
             activityBanner
+            if !slashSuggestions.isEmpty { slashSuggestionList }
             HStack(alignment: .bottom, spacing: 8) {
-                if !slashCommands.isEmpty && engine.isSupported {
-                    slashMenu
-                }
                 TextField(engine.isSupported ? "Message Claude…  ⌘↩ to send · / commands · ! bash"
                                               : "Conversation mode is local-only",
                           text: $input, axis: .vertical)
@@ -262,29 +260,43 @@ struct ConversationView: View {
         .background(.bar)
     }
 
-    /// Menu of custom slash commands; picking one drops `/name ` into the input
-    /// ready to send (or extend with arguments). Bash `!` needs no menu — the
-    /// placeholder hints it and the text passes straight through.
-    private var slashMenu: some View {
-        Menu {
-            ForEach(slashCommands) { cmd in
-                Button {
-                    input = cmd.invocation + " "
-                } label: {
-                    if let d = cmd.description, !d.isEmpty {
-                        Text("\(cmd.invocation)  —  \(d)")
-                    } else {
+    /// Commands to suggest right now: shown while the input is a partial `/name`
+    /// (a slash, no space yet), filtered by what's typed.
+    private var slashSuggestions: [SlashCommand] {
+        guard engine.isSupported, input.hasPrefix("/"),
+              !input.contains(" "), !input.contains("\n") else { return [] }
+        let q = input.dropFirst().lowercased()
+        let matches = q.isEmpty ? slashCommands
+                                : slashCommands.filter { $0.name.lowercased().hasPrefix(q) }
+        return Array(matches.prefix(8))
+    }
+
+    /// Autocomplete popover that floats above the input as you type `/…`.
+    /// Clicking a row completes the command; keep typing to filter.
+    private var slashSuggestionList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(slashSuggestions) { cmd in
+                Button { input = cmd.invocation + " " } label: {
+                    HStack(spacing: 8) {
                         Text(cmd.invocation)
+                            .font(.callout.monospaced())
+                        if let d = cmd.description, !d.isEmpty {
+                            Text(d).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        Text(cmd.scope).font(.caption2).foregroundStyle(.tertiary)
                     }
+                    .contentShape(Rectangle())
+                    .padding(.horizontal, 10).padding(.vertical, 6)
                 }
+                .buttonStyle(.plain)
             }
-        } label: {
-            Image(systemName: "slash.circle")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Insert a slash command")
+        .padding(.vertical, 2)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DS.rControl))
+        .overlay(RoundedRectangle(cornerRadius: DS.rControl).stroke(Color.secondary.opacity(0.2)))
+        .frame(maxWidth: 480, alignment: .leading)
+        .padding(.horizontal, 12)
     }
 
     private func sendIfPossible() {
