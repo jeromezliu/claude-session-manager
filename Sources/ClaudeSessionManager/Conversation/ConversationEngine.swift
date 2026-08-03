@@ -32,6 +32,18 @@ final class ConversationEngine: ObservableObject, Identifiable {
     /// Conversation mode drives a local `claude`; remote sessions keep the terminal.
     var isSupported: Bool { !session.isRemote }
 
+    /// The real session this conversation has been writing to, once its first
+    /// turn created it. Lets "Open Terminal" on a brand-new session resume the
+    /// same session (preserving history) instead of starting a fresh one.
+    var liveSessionSummary: SessionSummary? {
+        guard let sid = currentSessionID, !sid.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".claude/projects")
+            .appendingPathComponent(TerminalSession.encodedFolder(for: workingDir))
+            .appendingPathComponent("\(sid).jsonl")
+        return SessionParser.summary(for: url)
+    }
+
     /// A brand-new session with no id yet (first turn omits `--resume`).
     let isDraft: Bool
     /// Called once when a draft's real session id first appears, so the manager

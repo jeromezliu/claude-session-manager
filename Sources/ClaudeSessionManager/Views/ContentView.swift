@@ -416,10 +416,18 @@ struct ContentView: View {
                 }
             } else if let engine = activeNewConversation {
                 ConversationView(engine: engine, onOpenTerminal: {
-                    // Switch this new session over to a raw terminal instead.
-                    let dir = URL(fileURLWithPath: engine.session.workingDirectory)
                     activeNewConversation = nil
-                    activeNewTerminal = store.newSession(inDirectory: dir)
+                    if let summary = engine.liveSessionSummary {
+                        // The conversation already created a real session — resume
+                        // it so the terminal shows its history, instead of starting
+                        // a fresh (empty) session.
+                        store.continueSession(summary)
+                        activeNewTerminal = summary.id
+                    } else {
+                        // No turns yet: nothing to resume, start a new session.
+                        let dir = URL(fileURLWithPath: engine.session.workingDirectory)
+                        activeNewTerminal = store.newSession(inDirectory: dir)
+                    }
                 }, availableModels: discoveredModels)
             } else if let id = activeNewTerminal,
                       let terminal = terminals.session(for: id),
