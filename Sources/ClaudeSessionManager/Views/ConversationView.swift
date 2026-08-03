@@ -12,6 +12,7 @@ struct ConversationView: View {
     @ObservedObject private var capabilities = CLICapabilities.shared
     @ObservedObject private var modelStore = ModelStore.shared
     @State private var input = ""
+    @State private var slashCommands: [SlashCommand] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,6 +94,7 @@ struct ConversationView: View {
                 scrollToBottom(proxy, animated: false)
                 modelStore.loadIfNeeded()
                 snapDefaultModel()
+                slashCommands = SlashCommandCatalog.commands(projectDir: engine.session.workingDirectory)
             }
             .onChange(of: modelStore.models.count) { _ in snapDefaultModel() }
         }
@@ -202,7 +204,10 @@ struct ConversationView: View {
         VStack(spacing: 8) {
             activityBanner
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(engine.isSupported ? "Message Claude…  (⌘↩ to send)"
+                if !slashCommands.isEmpty && engine.isSupported {
+                    slashMenu
+                }
+                TextField(engine.isSupported ? "Message Claude…  ⌘↩ to send · / commands · ! bash"
                                               : "Conversation mode is local-only",
                           text: $input, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -255,6 +260,31 @@ struct ConversationView: View {
         }
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    /// Menu of custom slash commands; picking one drops `/name ` into the input
+    /// ready to send (or extend with arguments). Bash `!` needs no menu — the
+    /// placeholder hints it and the text passes straight through.
+    private var slashMenu: some View {
+        Menu {
+            ForEach(slashCommands) { cmd in
+                Button {
+                    input = cmd.invocation + " "
+                } label: {
+                    if let d = cmd.description, !d.isEmpty {
+                        Text("\(cmd.invocation)  —  \(d)")
+                    } else {
+                        Text(cmd.invocation)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "slash.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Insert a slash command")
     }
 
     private func sendIfPossible() {
