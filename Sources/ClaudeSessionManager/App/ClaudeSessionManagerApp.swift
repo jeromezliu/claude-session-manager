@@ -24,6 +24,8 @@ struct ClaudeSessionManagerApp: App {
                 .onAppear {
                     skills.start()
                     CLICapabilities.shared.start()
+                    ModelStore.shared.loadIfNeeded()
+                    ModelStore.runDiagnosticIfRequested()
                     SelfSnapshot.runIfRequested()
                     SelfTest.runIfRequested()
                 }

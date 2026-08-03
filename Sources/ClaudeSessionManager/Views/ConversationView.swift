@@ -10,6 +10,7 @@ struct ConversationView: View {
     var availableModels: [String] = []
 
     @ObservedObject private var capabilities = CLICapabilities.shared
+    @ObservedObject private var modelStore = ModelStore.shared
     @State private var input = ""
 
     var body: some View {
@@ -88,7 +89,12 @@ struct ConversationView: View {
                 .padding(.vertical, DS.gutter)
             }
             .onChange(of: engine.messages.count) { _ in scrollToBottom(proxy) }
-            .onAppear { scrollToBottom(proxy, animated: false) }
+            .onAppear {
+                scrollToBottom(proxy, animated: false)
+                modelStore.loadIfNeeded()
+                snapDefaultModel()
+            }
+            .onChange(of: modelStore.models.count) { _ in snapDefaultModel() }
         }
     }
 
@@ -128,15 +134,23 @@ struct ConversationView: View {
         }
     }
 
-    /// Discovered ids, plus the engine's current model if it's a concrete id —
-    /// a Picker with no tag matching its selection renders blank.
-    private var modelChoices: [String] {
-        var ids = availableModels
-        let current = engine.model
-        if !ids.contains(current), !ModelCatalog.aliases.contains(where: { $0.id == current }) {
-            ids.insert(current, at: 0)
-        }
-        return ids
+    /// The real, concrete models to offer: the live Models-API list when we
+    /// have it, otherwise the concrete ids seen in the user's own sessions.
+    /// No `default` / `(latest)` aliases — those are only a last-resort tag for
+    /// a brand-new session whose model isn't chosen yet.
+    private var pickerModels: [ModelStore.Model] {
+        if !modelStore.models.isEmpty { return modelStore.models }
+        return availableModels.map { .init(id: $0, display: ModelCatalog.label(for: $0)) }
+    }
+
+    /// A brand-new session starts on the CLI's `default`; once the real list is
+    /// known, snap it to a concrete model (the user's most-recent one, else the
+    /// newest available) so the picker never shows the word "Default".
+    private func snapDefaultModel() {
+        guard engine.model == "default" else { return }
+        let preferred = availableModels.first { id in modelStore.models.contains { $0.id == id } }
+            ?? modelStore.models.first?.id
+        if let preferred { engine.model = preferred }
     }
 
     /// Conversation mode always hides non-conversation activity (no toggle):
@@ -215,17 +229,15 @@ struct ConversationView: View {
 
             HStack(spacing: 8) {
                 Picker("Model", selection: $engine.model) {
-                    ForEach(ModelCatalog.aliases, id: \.id) { Text($0.label).tag($0.id) }
-                    if !modelChoices.isEmpty {
-                        Divider()
-                        ForEach(modelChoices, id: \.self) { id in
-                            Text(ModelCatalog.label(for: id)).tag(id)
-                        }
+                    ForEach(pickerModels) { Text($0.display).tag($0.id) }
+                    // Keep the current selection valid so the picker never blanks.
+                    if !pickerModels.contains(where: { $0.id == engine.model }) {
+                        Text(ModelCatalog.label(for: engine.model)).tag(engine.model)
                     }
                 }
                 .labelsHidden()
                 .fixedSize()
-                .help("Model for new turns — aliases track the latest release; below are models seen in your sessions")
+                .help("Model for new turns — the real models your account can use")
 
                 Picker("Permissions", selection: $engine.permissionMode) {
                     ForEach(modeChoices, id: \.self) { mode in
