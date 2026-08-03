@@ -13,6 +13,7 @@ struct ConversationView: View {
     @ObservedObject private var modelStore = ModelStore.shared
     @State private var input = ""
     @State private var slashCommands: [SlashCommand] = []
+    @State private var hoveredCommand: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -268,35 +269,65 @@ struct ConversationView: View {
         let q = input.dropFirst().lowercased()
         let matches = q.isEmpty ? slashCommands
                                 : slashCommands.filter { $0.name.lowercased().hasPrefix(q) }
-        return Array(matches.prefix(8))
+        return Array(matches.prefix(10))
     }
 
-    /// Autocomplete popover that floats above the input as you type `/…`.
-    /// Clicking a row completes the command; keep typing to filter.
+    /// Autocomplete popover that floats above the input as you type `/…`, styled
+    /// like a native completion list: frosted material, soft shadow, and a
+    /// full-width accent highlight on the hovered row. Click a row to complete.
     private var slashSuggestionList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(slashSuggestions) { cmd in
-                Button { input = cmd.invocation + " " } label: {
-                    HStack(spacing: 8) {
-                        Text(cmd.invocation)
-                            .font(.callout.monospaced())
-                        if let d = cmd.description, !d.isEmpty {
-                            Text(d).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer(minLength: 8)
-                        Text(cmd.scope).font(.caption2).foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                }
-                .buttonStyle(.plain)
-            }
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(slashSuggestions) { cmd in suggestionRow(cmd) }
         }
-        .padding(.vertical, 2)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DS.rControl))
-        .overlay(RoundedRectangle(cornerRadius: DS.rControl).stroke(Color.secondary.opacity(0.2)))
-        .frame(maxWidth: 480, alignment: .leading)
+        .padding(4)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08))
+        )
+        .shadow(color: .black.opacity(0.16), radius: 12, y: 4)
+        .frame(maxWidth: 460, alignment: .leading)
         .padding(.horizontal, 12)
+    }
+
+    private func suggestionRow(_ cmd: SlashCommand) -> some View {
+        let hovered = hoveredCommand == cmd.id
+        let fg: Color = hovered ? .white : .primary
+        return Button {
+            input = cmd.invocation + " "
+            hoveredCommand = nil
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: cmd.icon)
+                    .font(.caption)
+                    .frame(width: 15)
+                    .foregroundStyle(hovered ? Color.white.opacity(0.9) : .secondary)
+                Text(cmd.invocation)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(fg)
+                if let d = cmd.description, !d.isEmpty {
+                    Text(d)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .foregroundStyle(hovered ? Color.white.opacity(0.8) : .secondary)
+                }
+                Spacer(minLength: 10)
+                Text(cmd.scope.rawValue)
+                    .font(.caption2)
+                    .foregroundStyle(hovered ? Color.white.opacity(0.75) : Color.secondary.opacity(0.7))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hovered ? Color.accentColor : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            if inside { hoveredCommand = cmd.id }
+            else if hoveredCommand == cmd.id { hoveredCommand = nil }
+        }
     }
 
     private func sendIfPossible() {
