@@ -177,8 +177,7 @@ struct EventView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.15), lineWidth: 1))
+        .background(color.opacity(0.05), in: RoundedRectangle(cornerRadius: DS.rControl))
     }
 
     private var roleLabel: String { event.kind.label }
@@ -257,7 +256,7 @@ private struct BlockView: View {
                 .padding(8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: DS.rInline))
     }
 }
 

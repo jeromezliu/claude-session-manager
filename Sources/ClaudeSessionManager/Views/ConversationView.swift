@@ -56,20 +56,36 @@ struct ConversationView: View {
     private var messagesList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     if visibleMessages.isEmpty {
-                        Text("Send a message to start the conversation.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.top, 40)
+                        VStack(spacing: 8) {
+                            Image(systemName: "bubble.left.and.text.bubble.right")
+                                .font(.system(size: 34))
+                                .foregroundStyle(.tertiary)
+                            Text(engine.isSupported ? "Start the conversation"
+                                                     : "Conversation mode is local-only")
+                                .font(.title3.weight(.semibold))
+                            Text(engine.isSupported
+                                 ? "Type below to continue this session with Claude."
+                                 : "Open this session in the terminal to continue it on its remote host.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 60)
                     }
-                    ForEach(visibleMessages) { event in
-                        EventView(event: event).id(event.id)
+                    ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, event in
+                        let prev = index > 0 ? visibleMessages[index - 1] : nil
+                        let sameSpeaker = prev?.kind == event.kind
+                        ChatTurnView(event: event, showSpeaker: !sameSpeaker)
+                            .padding(.top, sameSpeaker ? DS.groupGap : DS.turnGap)
+                            .id(event.id)
                     }
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
-                .padding(14)
+                .padding(.horizontal, DS.gutter)
+                .padding(.vertical, DS.gutter)
             }
             .onChange(of: engine.messages.count) { _ in scrollToBottom(proxy) }
             .onAppear { scrollToBottom(proxy, animated: false) }
@@ -178,7 +194,7 @@ struct ConversationView: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...8)
                     .padding(8)
-                    .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                    .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: DS.rControl))
                     .disabled(!engine.isSupported)
                     .onSubmit(sendIfPossible)
 

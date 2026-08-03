@@ -176,6 +176,6 @@ private struct CodeBlock: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: DS.rInline))
     }
 }
