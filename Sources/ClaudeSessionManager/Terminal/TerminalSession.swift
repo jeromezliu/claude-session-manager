@@ -29,7 +29,6 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
     /// Called when a new session's real file is detected: (oldID, realSummary).
     private let onAdopt: ((String, SessionSummary) -> Void)?
     private let resume: Bool
-    private var adoptAttempts = 0
     /// The resolved host config for a remote-tagged session — supplies the
     /// ssh destination, port, and auth for the PTY-backed `ssh` process.
     private let remoteHost: RemoteHost?
@@ -106,7 +105,7 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
                 command = "echo '### internal terminal OK'; echo \"cwd=$PWD\"\n"
             } else if resume {
                 command = "cd \(RemoteShell.quoteRemotePath(session.workingDirectory)) 2>/dev/null; " +
-                          "claude --resume \(Self.shellQuote(session.id))\n"
+                          "claude --resume \(RemoteShell.shellQuote(session.id))\n"
             } else {
                 // No 2>/dev/null here: if the typed directory doesn't exist,
                 // the user should see cd's error instead of Claude silently
@@ -123,7 +122,7 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
             if ProcessInfo.processInfo.environment["CSM_TERM_TEST"] == "1" {
                 command = "echo '### internal terminal OK'; echo \"cwd=$PWD\"\n"
             } else if resume {
-                command = "claude --resume \(Self.shellQuote(session.id))\n"
+                command = "claude --resume \(RemoteShell.shellQuote(session.id))\n"
             } else {
                 command = "claude\n"   // brand-new session
             }
@@ -151,28 +150,23 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
     /// Claude encodes a cwd into a projects folder name by replacing every
     /// non-alphanumeric character with "-" (verified against real folders:
     /// "/", ".", spaces and "~" all become "-").
-    static func encodedFolder(for path: String) -> String {
+    nonisolated static func encodedFolder(for path: String) -> String {
         String(path.map { ch in
             (ch.isASCII && (ch.isLetter || ch.isNumber)) ? ch : "-"
         })
     }
 
     private func beginAdoption(cwd: String) {
-        let projectsRoot = URL(fileURLWithPath: NSHomeDirectory())
+        let projectDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(".claude/projects")
-        let projectDir = projectsRoot.appendingPathComponent(Self.encodedFolder(for: cwd))
+            .appendingPathComponent(Self.encodedFolder(for: cwd))
         let existing = Self.jsonlIDs(in: projectDir)
-        pollForAdoption(projectDir: projectDir, existing: existing)
-    }
-
-    private static func jsonlIDs(in dir: URL) -> Set<String> {
-        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        return Set(files.filter { $0.pathExtension == "jsonl" }.map { $0.deletingPathExtension().lastPathComponent })
+        Task { await pollForAdoption(in: projectDir, existing: existing, remote: nil) }
     }
 
     /// Remote counterpart of `beginAdoption`: there's no local FS to watch, so
     /// each poll tick scoped-rsyncs the one project folder first, then checks
-    /// the mirrored copy with the exact same logic as the local path.
+    /// the mirrored copy with the same logic as the local path.
     private func beginAdoptionRemote(host: RemoteHost, hostStore: RemoteHostStore, remoteDir: String) {
         Task { [weak self] in
             // Claude derives the projects folder name from the *absolute* cwd,
@@ -189,71 +183,47 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
             guard let self else { return }
             let encoded = Self.encodedFolder(for: dir)
             let localDir = hostStore.localCacheDir(for: host).appendingPathComponent(encoded, isDirectory: true)
-            let existing = Self.jsonlIDs(in: localDir)
-            await self.pollForAdoptionRemote(host: host, hostStore: hostStore, encodedFolder: encoded,
-                                             localDir: localDir, existing: existing)
+            await self.pollForAdoption(in: localDir, existing: Self.jsonlIDs(in: localDir),
+                                       remote: (host, hostStore, encoded))
         }
     }
 
-    private func pollForAdoptionRemote(host: RemoteHost, hostStore: RemoteHostStore, encodedFolder: String,
-                                        localDir: URL, existing: Set<String>) async {
-        var attempts = 0
-        while adoptedSummary == nil, !hasExited, attempts < 80 {
-            attempts += 1
-            await hostStore.syncProjectFolder(host, encodedFolder)
+    private static func jsonlIDs(in dir: URL) -> Set<String> {
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        return Set(files.filter { $0.pathExtension == "jsonl" }.map { $0.deletingPathExtension().lastPathComponent })
+    }
 
-            let fm = FileManager.default
-            let files = (try? fm.contentsOfDirectory(at: localDir,
-                                                     includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-            let fresh = files.filter {
-                $0.pathExtension == "jsonl" && !existing.contains($0.deletingPathExtension().lastPathComponent)
-            }
-            let newest = fresh.max { a, b in
-                let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                return da < db
-            }
-            if let newest, let summary = SessionParser.summary(for: newest), summary.messageCount > 0 {
+    /// Poll `dir` (every 1.5s, up to 2 minutes) for a session file that wasn't
+    /// there before launch, and adopt it once it holds a real conversation turn
+    /// (not just startup metadata). For a remote host, the folder is re-synced
+    /// from the host before each check.
+    private func pollForAdoption(in dir: URL, existing: Set<String>,
+                                 remote: (host: RemoteHost, store: RemoteHostStore, folder: String)?) async {
+        for _ in 0..<80 {
+            guard adoptedSummary == nil, !hasExited else { return }
+            if let remote { await remote.store.syncProjectFolder(remote.host, remote.folder) }
+
+            if let newest = Self.newestJSONL(in: dir, excluding: existing),
+               var summary = SessionParser.summary(for: newest), summary.messageCount > 0 {
+                if let host = remote?.host {
+                    summary = summary.withRemote(hostID: host.id, displayName: host.displayName)
+                }
                 let oldID = id
-                let tagged = summary.withRemote(hostID: host.id, displayName: host.displayName)
-                adoptedSummary = tagged
-                onAdopt?(oldID, tagged)
+                adoptedSummary = summary
+                onAdopt?(oldID, summary)   // let the manager re-key this terminal to the real id
                 return
             }
             try? await Task.sleep(nanoseconds: 1_500_000_000)
         }
     }
 
-    private func pollForAdoption(projectDir: URL, existing: Set<String>) {
-        adoptAttempts += 1
-        guard adoptedSummary == nil, !hasExited, adoptAttempts <= 80 else { return }
-
-        let fm = FileManager.default
-        let files = (try? fm.contentsOfDirectory(at: projectDir,
-                                                 includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        let fresh = files.filter {
-            $0.pathExtension == "jsonl" && !existing.contains($0.deletingPathExtension().lastPathComponent)
-        }
-        let newest = fresh.max { a, b in
-            let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-            let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-            return da < db
-        }
-        // Adopt only once a real conversation turn exists (not just startup metadata).
-        if let newest, let summary = SessionParser.summary(for: newest), summary.messageCount > 0 {
-            let oldID = id
-            adoptedSummary = summary
-            onAdopt?(oldID, summary)   // let the manager re-key this terminal to the real id
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.pollForAdoption(projectDir: projectDir, existing: existing)
-        }
-    }
-
-    private static func shellQuote(_ s: String) -> String {
-        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    private static func newestJSONL(in dir: URL, excluding existing: Set<String>) -> URL? {
+        let key = URLResourceKey.contentModificationDateKey
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [key])) ?? []
+        let mtime = { (u: URL) in (try? u.resourceValues(forKeys: [key]))?.contentModificationDate ?? .distantPast }
+        return files
+            .filter { $0.pathExtension == "jsonl" && !existing.contains($0.deletingPathExtension().lastPathComponent) }
+            .max { mtime($0) < mtime($1) }
     }
 
     // MARK: - Embed / pop out

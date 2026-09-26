@@ -41,8 +41,8 @@ final class SessionStore: ObservableObject {
         didSet { Task { await reload() } }
     }
 
-    /// Context-window limit used for token-usage display: "auto", "200k", "1m".
-    @AppStorage("contextWindowMode") var contextWindowMode = "auto"
+    /// Context-window limit used for token-usage display.
+    @AppStorage("contextWindowMode") var contextWindowMode = ContextWindowMode.auto
 
     /// Default working directory for new sessions (remembered across launches).
     @AppStorage("newSessionDir") var newSessionDir: String = SessionStore.defaultNewSessionDir

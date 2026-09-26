@@ -91,22 +91,22 @@ enum SessionActions {
             // Terminal.app gives ssh a real TTY, so password/passphrase auth
             // just prompts there — no askpass plumbing needed for this path.
             let sshArgs = RemoteShell.sshArgs(for: host, context: .interactive)
-                .map(shellQuote).joined(separator: " ")
+                .map(RemoteShell.shellQuote).joined(separator: " ")
             script = """
             #!/bin/bash
             clear
             echo "▶ Resuming Claude session \(session.id) on \(host.endpoint)"
-            exec ssh -t \(sshArgs) \(shellQuote(remoteCmd))
+            exec ssh -t \(sshArgs) \(RemoteShell.shellQuote(remoteCmd))
             """
         } else {
             let dir = session.workingDirectory
             let cdTarget = FileManager.default.fileExists(atPath: dir) ? dir : NSHomeDirectory()
             script = """
             #!/bin/bash
-            cd \(shellQuote(cdTarget)) || exit 1
+            cd \(RemoteShell.shellQuote(cdTarget)) || exit 1
             clear
             echo "▶ Resuming Claude session \(session.id)"
-            exec claude --resume \(shellQuote(session.id))
+            exec claude --resume \(RemoteShell.shellQuote(session.id))
             """
         }
 
@@ -139,11 +139,5 @@ enum SessionActions {
     static func copySessionID(_ session: SessionSummary) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(session.id, forType: .string)
-    }
-
-    // MARK: - Quoting helpers
-
-    private static func shellQuote(_ s: String) -> String {
-        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

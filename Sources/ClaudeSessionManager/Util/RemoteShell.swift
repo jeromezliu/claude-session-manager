@@ -176,6 +176,7 @@ enum RemoteShell {
                       timeout: timeout)
     }
 
+    /// POSIX single-quote `s` for any shell (local `.command` scripts too).
     static func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }

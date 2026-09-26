@@ -16,7 +16,7 @@ struct TranscriptView: View {
     /// Where the last parse stopped, so live reloads only read appended bytes.
     @State private var cursor: SessionParser.TranscriptCursor?
     @AppStorage("showToolActivity") private var showToolActivity = false
-    @AppStorage("contextWindowMode") private var contextWindowMode = "auto"
+    @AppStorage("contextWindowMode") private var contextWindowMode = ContextWindowMode.auto
 
     /// Events for display: newest first, and (by default) only real conversation
     /// turns — attachments, system, meta and tool-only turns are hidden.

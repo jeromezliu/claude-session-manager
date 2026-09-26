@@ -54,12 +54,12 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
     var sortDate: Date { lastActivityAt ?? modifiedAt }
 
     /// Resolve the context-window limit for display given the user's setting.
-    /// "auto" bumps to 1M once a session's observed usage exceeds 200k.
-    func contextWindow(mode: String) -> Int {
+    /// `.auto` bumps to 1M once a session's observed usage exceeds 200k.
+    func contextWindow(mode: ContextWindowMode) -> Int {
         switch mode {
-        case "200k": return 200_000
-        case "1m": return 1_000_000
-        default: return maxContextTokens > 200_000 ? 1_000_000 : 200_000
+        case .k200: return 200_000
+        case .m1: return 1_000_000
+        case .auto: return maxContextTokens > 200_000 ? 1_000_000 : 200_000
         }
     }
 
@@ -91,6 +91,19 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
         return tempRoots.contains { path.hasPrefix($0) }
     }
 
+    /// Stand-in for a session that doesn't have a file yet (a brand-new
+    /// session whose terminal is starting up).
+    static func placeholder(id: String, fileURL: URL, projectFolder: String, cwd: String,
+                            title: String) -> SessionSummary {
+        SessionSummary(
+            id: id, fileURL: fileURL, projectFolder: projectFolder, cwd: cwd,
+            gitBranch: nil, claudeVersion: nil, title: title,
+            firstPrompt: nil, lastPrompt: nil,
+            messageCount: 0, models: [], totalOutputTokens: 0,
+            createdAt: nil, lastActivityAt: nil, modifiedAt: Date(), fileSize: 0,
+            latestContextTokens: 0, maxContextTokens: 0)
+    }
+
     /// A copy with a new title (used after rename / when restoring a stored title).
     func withTitle(_ newTitle: String) -> SessionSummary {
         var copy = self
@@ -105,5 +118,21 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
         copy.remoteHostID = hostID
         copy.remoteDisplayName = displayName
         return copy
+    }
+}
+
+/// Context-window limit used for token-usage display (persisted via
+/// @AppStorage, so the raw values must stay stable).
+enum ContextWindowMode: String, CaseIterable {
+    case auto
+    case k200 = "200k"
+    case m1 = "1m"
+
+    var label: String {
+        switch self {
+        case .auto: return "Auto"
+        case .k200: return "200K"
+        case .m1: return "1M"
+        }
     }
 }
