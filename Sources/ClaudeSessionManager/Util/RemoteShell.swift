@@ -127,17 +127,23 @@ enum RemoteShell {
             // there is no PTY here to answer one, and it would just hang.
             proc.standardInput = FileHandle.nullDevice
 
+            // Drain both pipes while the process runs: reading only after exit
+            // deadlocks once output exceeds the pipe buffer (~64 KB) — the
+            // child blocks on write and never terminates.
+            let outBuf = PipeBuffer(outPipe)
+            let errBuf = PipeBuffer(errPipe)
+
             proc.terminationHandler = { p in
-                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                let out = String(data: outData, encoding: .utf8) ?? ""
-                let err = String(data: errData, encoding: .utf8) ?? ""
+                let out = String(data: outBuf.finish(), encoding: .utf8) ?? ""
+                let err = String(data: errBuf.finish(), encoding: .utf8) ?? ""
                 continuation.resume(returning: Output(status: p.terminationStatus, stdout: out, stderr: err))
             }
 
             do {
                 try proc.run()
             } catch {
+                outBuf.cancel()
+                errBuf.cancel()
                 continuation.resume(throwing: RemoteShellError.launchFailed(error.localizedDescription))
                 return
             }
@@ -192,4 +198,33 @@ enum RemoteShell {
         if path.hasPrefix("~/") { return String(path.dropFirst(2)) }
         return path
     }
+}
+
+/// Accumulates a pipe's output as it arrives (via `readabilityHandler`), so
+/// the writer never blocks on a full pipe buffer.
+private final class PipeBuffer: @unchecked Sendable {
+    private let handle: FileHandle
+    private var data = Data()
+    private let lock = NSLock()
+
+    init(_ pipe: Pipe) {
+        handle = pipe.fileHandleForReading
+        handle.readabilityHandler = { [weak self] h in
+            let chunk = h.availableData
+            guard let self, !chunk.isEmpty else { return }
+            self.lock.lock(); self.data.append(chunk); self.lock.unlock()
+        }
+    }
+
+    /// Stop streaming and return everything written, including any tail
+    /// still sitting in the pipe after the process exited.
+    func finish() -> Data {
+        handle.readabilityHandler = nil
+        let rest = handle.readDataToEndOfFile()
+        lock.lock(); defer { lock.unlock() }
+        data.append(rest)
+        return data
+    }
+
+    func cancel() { handle.readabilityHandler = nil }
 }

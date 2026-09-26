@@ -6,6 +6,15 @@ import Foundation
 /// came from.
 enum TrashManager {
 
+    enum TrashError: LocalizedError {
+        case remote(String)
+        var errorDescription: String? {
+            switch self {
+            case .remote(let m): return m
+            }
+        }
+    }
+
     static var directory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
@@ -45,32 +54,39 @@ enum TrashManager {
             counter += 1
         }
 
-        var remoteHostID: String?
-        var remoteDisplayName: String?
-        var remoteRoot: String?
-        if let hostID = session.remoteHostID, let hostStore = remoteHostStore,
-           let host = await hostStore.host(withID: hostID) {
-            let remotePath = "\(host.remoteRoot)/\(session.projectFolder)/\(session.id).jsonl"
-            // -f: don't fail if the remote copy is already gone (stale mirror).
-            let out = try await RemoteShell.sshRun(host: host, remoteCommand: "rm -f \(RemoteShell.quoteRemotePath(remotePath))")
-            guard out.succeeded else {
-                throw NSError(domain: "ClaudeSessionManager", code: 4,
-                              userInfo: [NSLocalizedDescriptionKey: out.stderr.isEmpty ? "Couldn't remove the remote file." : out.stderr])
-            }
-            remoteHostID = hostID
-            remoteDisplayName = host.displayName
-            remoteRoot = host.remoteRoot
+        var remoteHost: RemoteHost?
+        if let hostID = session.remoteHostID, let hostStore = remoteHostStore {
+            remoteHost = await hostStore.host(withID: hostID)
         }
 
+        // Move the local copy first: if that fails nothing has been touched
+        // yet. Only then remove the remote original — deleting remotely first
+        // would lose the session if the local move failed, since the next
+        // `rsync --delete` would also wipe the mirrored copy.
         try fm.moveItem(at: session.fileURL, to: target)
+
+        if let host = remoteHost {
+            let remotePath = "\(host.remoteRoot)/\(session.projectFolder)/\(session.id).jsonl"
+            do {
+                // -f: don't fail if the remote copy is already gone (stale mirror).
+                let out = try await RemoteShell.sshRun(host: host, remoteCommand: "rm -f \(RemoteShell.quoteRemotePath(remotePath))")
+                guard out.succeeded else {
+                    throw TrashError.remote(out.stderr.isEmpty ? "Couldn't remove the remote file." : out.stderr)
+                }
+            } catch {
+                // Put the mirror copy back so the list stays consistent with the host.
+                try? fm.moveItem(at: target, to: session.fileURL)
+                throw error
+            }
+        }
 
         let meta = TrashMeta(originalPath: session.fileURL.path,
                              projectFolder: session.projectFolder,
                              title: session.title,
                              deletedAt: Date(),
-                             remoteHostID: remoteHostID,
-                             remoteDisplayName: remoteDisplayName,
-                             remoteRoot: remoteRoot)
+                             remoteHostID: remoteHost?.id,
+                             remoteDisplayName: remoteHost?.displayName,
+                             remoteRoot: remoteHost?.remoteRoot)
         let metaURL = target.appendingPathExtension("meta")
         try encoder.encode(meta).write(to: metaURL)
     }
@@ -120,13 +136,11 @@ enum TrashManager {
             let remoteDir = (remotePath as NSString).deletingLastPathComponent
             let mkdir = try await RemoteShell.sshRun(host: host, remoteCommand: "mkdir -p \(RemoteShell.quoteRemotePath(remoteDir))")
             guard mkdir.succeeded else {
-                throw NSError(domain: "ClaudeSessionManager", code: 5,
-                              userInfo: [NSLocalizedDescriptionKey: mkdir.stderr.isEmpty ? "Couldn't prepare the remote folder." : mkdir.stderr])
+                throw TrashError.remote(mkdir.stderr.isEmpty ? "Couldn't prepare the remote folder." : mkdir.stderr)
             }
             let scp = try await RemoteShell.scpUpload(host: host, localPath: entry.trashedURL.path, remotePath: remotePath)
             guard scp.succeeded else {
-                throw NSError(domain: "ClaudeSessionManager", code: 6,
-                              userInfo: [NSLocalizedDescriptionKey: scp.stderr.isEmpty ? "Couldn't upload the session." : scp.stderr])
+                throw TrashError.remote(scp.stderr.isEmpty ? "Couldn't upload the session." : scp.stderr)
             }
             try? FileManager.default.removeItem(at: entry.trashedURL)
             try? FileManager.default.removeItem(at: entry.metaURL)
@@ -162,8 +176,13 @@ enum TrashManager {
         try? fm.removeItem(at: entry.metaURL)
     }
 
-    /// Permanently delete everything in the trash.
+    /// Permanently delete everything in the trash. Keeps going past a failed
+    /// entry, then rethrows the first error so the caller can report it.
     static func empty() throws {
-        for entry in list() { try? purge(entry) }
+        var firstError: Error?
+        for entry in list() {
+            do { try purge(entry) } catch { if firstError == nil { firstError = error } }
+        }
+        if let firstError { throw firstError }
     }
 }

@@ -259,10 +259,7 @@ final class SessionStore: ObservableObject {
         Task {
             do {
                 try await TrashManager.trash(session, remoteHostStore: remoteHostStore)
-                for i in groups.indices {
-                    groups[i].sessions.removeAll { $0.id == session.id }
-                }
-                groups.removeAll { $0.sessions.isEmpty }
+                removeSessions([session.id])
                 await loadTrash()
             } catch {
                 errorMessage = error.localizedDescription
@@ -274,17 +271,23 @@ final class SessionStore: ObservableObject {
     func deleteMany(_ ids: Set<String>) {
         let targets = groups.flatMap { $0.sessions }.filter { ids.contains($0.id) }
         Task {
-            var failed = false
+            var trashed: Set<String> = []
+            var failures: [String] = []
             for session in targets {
-                do { try await TrashManager.trash(session, remoteHostStore: remoteHostStore) }
-                catch { errorMessage = error.localizedDescription; failed = true }
+                do {
+                    try await TrashManager.trash(session, remoteHostStore: remoteHostStore)
+                    trashed.insert(session.id)
+                } catch {
+                    failures.append("“\(session.title)”: \(error.localizedDescription)")
+                }
             }
-            for i in groups.indices {
-                groups[i].sessions.removeAll { ids.contains($0.id) }
-            }
-            groups.removeAll { $0.sessions.isEmpty }
+            // Only drop the ones that actually moved — a failed one stays listed.
+            removeSessions(trashed)
             await loadTrash()
-            if !failed { errorMessage = nil }
+            if !failures.isEmpty {
+                errorMessage = "Couldn't move \(failures.count) of \(targets.count) sessions to Trash:\n"
+                    + failures.joined(separator: "\n")
+            }
         }
     }
 
@@ -332,6 +335,7 @@ final class SessionStore: ObservableObject {
             trashEntries.removeAll()
         } catch {
             errorMessage = error.localizedDescription
+            Task { await loadTrash() }   // show whatever couldn't be deleted
         }
     }
 
@@ -346,6 +350,14 @@ final class SessionStore: ObservableObject {
         let host = session.remoteHostID.flatMap { remoteHostStore.host(withID: $0) }
         do { try SessionActions.continueInClaude(session, remoteHost: host) }
         catch { errorMessage = error.localizedDescription }
+    }
+
+    private func removeSessions(_ ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        for i in groups.indices {
+            groups[i].sessions.removeAll { ids.contains($0.id) }
+        }
+        groups.removeAll { $0.sessions.isEmpty }
     }
 
     private func updateSession(_ id: String, _ mutate: (inout SessionSummary) -> Void) {
