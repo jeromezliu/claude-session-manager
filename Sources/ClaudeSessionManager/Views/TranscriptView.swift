@@ -13,6 +13,8 @@ struct TranscriptView: View {
     @State private var events: [TranscriptEvent] = []
     @State private var loading = true
     @State private var watcher: FileWatcher?
+    /// Where the last parse stopped, so live reloads only read appended bytes.
+    @State private var cursor: SessionParser.TranscriptCursor?
     @AppStorage("showToolActivity") private var showToolActivity = false
     @AppStorage("contextWindowMode") private var contextWindowMode = "auto"
 
@@ -137,21 +139,32 @@ struct TranscriptView: View {
 
     private func load() async {
         loading = true
-        let url = session.fileURL
-        let parsed = await Task.detached(priority: .userInitiated) {
-            SessionParser.transcript(for: url)
-        }.value
-        events = parsed
+        events = []
+        cursor = nil
+        await reload()
         loading = false
     }
 
-    /// Silent re-parse (no spinner) used when the file changes on disk.
+    /// Parse only what was appended since the last read (the file is
+    /// append-only while Claude writes it); start over if it shrank.
     private func reload() async {
         let url = session.fileURL
-        let parsed = await Task.detached(priority: .userInitiated) {
-            SessionParser.transcript(for: url)
-        }.value
-        events = parsed
+        let start = cursor ?? SessionParser.TranscriptCursor()
+        // FileManager rather than URL.resourceValues: the latter can hand back
+        // a value cached on this (long-lived) URL instead of the current size.
+        let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.uint64Value ?? 0
+        let from = size < start.offset ? SessionParser.TranscriptCursor() : start
+        guard let result = await Task.detached(priority: .userInitiated, operation: {
+            SessionParser.transcriptEvents(for: url, from: from)
+        }).value else { return }
+
+        // Another session was selected while parsing: discard.
+        guard url == session.fileURL else { return }
+        // An overlapping reload already advanced the cursor: this result
+        // would duplicate events, so re-read from the new position instead.
+        guard (cursor ?? SessionParser.TranscriptCursor()) == start else { return await reload() }
+        if from.offset == 0 { events = result.events } else { events += result.events }
+        cursor = result.cursor
     }
 }
 

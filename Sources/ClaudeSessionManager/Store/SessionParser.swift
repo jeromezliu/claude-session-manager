@@ -4,27 +4,73 @@ import Foundation
 /// Uses `JSONSerialization` because the per-line schema varies a lot.
 enum SessionParser {
 
-    private static let iso: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
+    /// ISO8601DateFormatter isn't documented as thread-safe and scans parse
+    /// files concurrently, so each thread gets its own pair of formatters.
+    private static func formatters() -> (fractional: ISO8601DateFormatter, plain: ISO8601DateFormatter) {
+        let key = "SessionParser.iso"
+        if let cached = Thread.current.threadDictionary[key] as? [ISO8601DateFormatter] {
+            return (cached[0], cached[1])
+        }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        Thread.current.threadDictionary[key] = [fractional, plain]
+        return (fractional, plain)
+    }
 
     private static func parseDate(_ any: Any?) -> Date? {
         guard let s = any as? String else { return nil }
-        return iso.date(from: s) ?? ISO8601DateFormatter().date(from: s)
+        let f = formatters()
+        return f.fractional.date(from: s) ?? f.plain.date(from: s)
+    }
+
+    // MARK: - Line reading
+
+    /// Calls `body` for every non-empty line of `url` starting at byte
+    /// `offset`, with the line's JSON object (nil if it isn't one). Returns
+    /// the offset just past the last line consumed, or nil if the file can't
+    /// be read. A trailing line with no newline is consumed only if it parses
+    /// — otherwise it's likely still being written, so it's left for the next
+    /// call (which is what makes incremental re-reads safe).
+    static func readLines(of url: URL, from offset: UInt64 = 0,
+                          _ body: ([String: Any]?) -> Void) -> UInt64? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        do {
+            try handle.seek(toOffset: offset)
+        } catch {
+            return nil
+        }
+        guard let data = try? handle.readToEnd(), !data.isEmpty else { return offset }
+
+        var consumed = 0
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            let base = raw.baseAddress!
+            let count = raw.count
+            var lineStart = 0
+            while lineStart < count {
+                let nl = memchr(base + lineStart, 0x0A, count - lineStart)
+                    .map { $0 - UnsafeMutableRawPointer(mutating: base) }
+                let lineEnd = nl ?? count
+                if lineEnd > lineStart {
+                    let line = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: base + lineStart),
+                                    count: lineEnd - lineStart, deallocator: .none)
+                    let obj = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
+                    if nl == nil && obj == nil { break }   // partial final line
+                    body(obj)
+                }
+                lineStart = lineEnd + 1
+                consumed = min(lineStart, count)
+            }
+        }
+        return offset + UInt64(consumed)
     }
 
     // MARK: - Summary (cheap, for the list)
 
-    static func summary(for url: URL) -> SessionSummary? {
-        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let size = (attrs?[.size] as? Int) ?? 0
-        let mtime = (attrs?[.modificationDate] as? Date) ?? Date(timeIntervalSince1970: 0)
-
-        guard let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8) else { return nil }
-
+    /// Running state of a summary parse. Codable so `SummaryCache` can persist
+    /// it and resume parsing from where it stopped when the file grows.
+    struct SummaryState: Codable, Sendable {
         var cwd = ""
         var gitBranch: String?
         var version: String?
@@ -38,10 +84,8 @@ enum SessionParser {
         var lastActivityAt: Date?
         var latestContextTokens = 0
         var maxContextTokens = 0
-        var lastModel: String?
 
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
+        mutating func consume(_ obj: [String: Any]) {
             let type = obj["type"] as? String ?? ""
 
             if cwd.isEmpty, let c = obj["cwd"] as? String { cwd = c }
@@ -64,10 +108,7 @@ enum SessionParser {
                 messageCount += 1
                 if let t = parseDate(obj["timestamp"]) { lastActivityAt = t }
                 if let msg = obj["message"] as? [String: Any] {
-                    if let m = msg["model"] as? String {
-                        lastModel = m
-                        if !models.contains(m) { models.append(m) }
-                    }
+                    if let m = msg["model"] as? String, !models.contains(m) { models.append(m) }
                     if let usage = msg["usage"] as? [String: Any] {
                         if let out = usage["output_tokens"] as? Int { totalOutput += out }
                         // Context size at this turn ≈ input + cache read + cache creation.
@@ -88,75 +129,99 @@ enum SessionParser {
             }
         }
 
-        let finalTitle = title
-            ?? firstPrompt.map { String($0.prefix(80)) }
-            ?? "(untitled session)"
+        func summary(for url: URL, mtime: Date, size: Int) -> SessionSummary {
+            SessionSummary(
+                id: url.deletingPathExtension().lastPathComponent,
+                fileURL: url,
+                projectFolder: url.deletingLastPathComponent().lastPathComponent,
+                cwd: cwd,
+                gitBranch: gitBranch,
+                claudeVersion: version,
+                title: title ?? firstPrompt.map { String($0.prefix(80)) } ?? "(untitled session)",
+                firstPrompt: firstPrompt,
+                lastPrompt: lastPrompt,
+                messageCount: messageCount,
+                models: models,
+                totalOutputTokens: totalOutput,
+                createdAt: createdAt,
+                lastActivityAt: lastActivityAt,
+                modifiedAt: mtime,
+                fileSize: size,
+                latestContextTokens: latestContextTokens,
+                maxContextTokens: maxContextTokens
+            )
+        }
+    }
 
-        return SessionSummary(
-            id: url.deletingPathExtension().lastPathComponent,
-            fileURL: url,
-            projectFolder: url.deletingLastPathComponent().lastPathComponent,
-            cwd: cwd,
-            gitBranch: gitBranch,
-            claudeVersion: version,
-            title: finalTitle,
-            firstPrompt: firstPrompt,
-            lastPrompt: lastPrompt,
-            messageCount: messageCount,
-            models: models,
-            totalOutputTokens: totalOutput,
-            createdAt: createdAt,
-            lastActivityAt: lastActivityAt,
-            modifiedAt: mtime,
-            fileSize: size,
-            latestContextTokens: latestContextTokens,
-            maxContextTokens: maxContextTokens
-        )
+    /// Continue a summary parse from `offset` (0 = from scratch). Returns the
+    /// updated state and the new offset, or nil if the file can't be read.
+    static func summaryState(for url: URL, resuming state: SummaryState = SummaryState(),
+                             from offset: UInt64 = 0) -> (state: SummaryState, offset: UInt64)? {
+        var state = state
+        guard let end = readLines(of: url, from: offset, { obj in
+            if let obj { state.consume(obj) }
+        }) else { return nil }
+        return (state, end)
+    }
+
+    static func summary(for url: URL) -> SessionSummary? {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attrs?[.size] as? Int) ?? 0
+        let mtime = (attrs?[.modificationDate] as? Date) ?? Date(timeIntervalSince1970: 0)
+        return summaryState(for: url)?.state.summary(for: url, mtime: mtime, size: size)
     }
 
     // MARK: - Full transcript (for the detail pane)
 
+    /// Where a transcript parse stopped: byte offset plus the index of the
+    /// next line (event ids are line indices, so they stay stable across
+    /// incremental reads).
+    struct TranscriptCursor: Sendable, Equatable {
+        var offset: UInt64 = 0
+        var lineIndex = 0
+    }
+
     static func transcript(for url: URL) -> [TranscriptEvent] {
-        guard let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8) else { return [] }
+        transcriptEvents(for: url)?.events ?? []
+    }
 
+    /// Parse transcript events from `cursor` onward. Returns the new events
+    /// and the cursor to resume from, or nil if the file can't be read.
+    static func transcriptEvents(for url: URL, from cursor: TranscriptCursor = TranscriptCursor())
+        -> (events: [TranscriptEvent], cursor: TranscriptCursor)? {
         var events: [TranscriptEvent] = []
-        var index = 0
-
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+        var index = cursor.lineIndex
+        guard let end = readLines(of: url, from: cursor.offset, { obj in
             defer { index += 1 }
-            guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
-            let type = obj["type"] as? String ?? ""
-            let ts = parseDate(obj["timestamp"])
+            if let obj, let event = event(from: obj, index: index) { events.append(event) }
+        }) else { return nil }
+        return (events, TranscriptCursor(offset: end, lineIndex: index))
+    }
 
-            switch type {
-            case "user":
-                let msg = obj["message"] as? [String: Any]
-                let blocks = contentBlocks(from: msg?["content"], toolResult: obj["toolUseResult"])
-                if !blocks.isEmpty {
-                    events.append(.init(id: index, kind: .user, timestamp: ts, model: nil, blocks: blocks))
-                }
-            case "assistant":
-                let msg = obj["message"] as? [String: Any]
-                let model = msg?["model"] as? String
-                let blocks = contentBlocks(from: msg?["content"], toolResult: nil)
-                if !blocks.isEmpty {
-                    events.append(.init(id: index, kind: .assistant, timestamp: ts, model: model, blocks: blocks))
-                }
-            case "attachment":
-                let att = obj["attachment"] as? [String: Any]
-                let desc = (att?["type"] as? String) ?? "attachment"
-                events.append(.init(id: index, kind: .attachment, timestamp: ts, model: nil,
-                                    blocks: [.note("Attachment: \(desc)")]))
-            case "system":
-                let subtype = obj["subtype"] as? String ?? "system"
-                events.append(.init(id: index, kind: .system, timestamp: ts, model: nil,
-                                    blocks: [.note(subtype)]))
-            default:
-                break   // mode / permission-mode / ai-title / last-prompt / snapshots: skipped in transcript
-            }
+    private static func event(from obj: [String: Any], index: Int) -> TranscriptEvent? {
+        let type = obj["type"] as? String ?? ""
+        let ts = parseDate(obj["timestamp"])
+
+        switch type {
+        case "user":
+            let msg = obj["message"] as? [String: Any]
+            let blocks = contentBlocks(from: msg?["content"], toolResult: obj["toolUseResult"])
+            return blocks.isEmpty ? nil : .init(id: index, kind: .user, timestamp: ts, model: nil, blocks: blocks)
+        case "assistant":
+            let msg = obj["message"] as? [String: Any]
+            let blocks = contentBlocks(from: msg?["content"], toolResult: nil)
+            return blocks.isEmpty ? nil
+                : .init(id: index, kind: .assistant, timestamp: ts, model: msg?["model"] as? String, blocks: blocks)
+        case "attachment":
+            let att = obj["attachment"] as? [String: Any]
+            let desc = (att?["type"] as? String) ?? "attachment"
+            return .init(id: index, kind: .attachment, timestamp: ts, model: nil, blocks: [.note("Attachment: \(desc)")])
+        case "system":
+            let subtype = obj["subtype"] as? String ?? "system"
+            return .init(id: index, kind: .system, timestamp: ts, model: nil, blocks: [.note(subtype)])
+        default:
+            return nil   // mode / permission-mode / ai-title / last-prompt / snapshots: skipped in transcript
         }
-        return events
     }
 
     // MARK: - Content helpers

@@ -15,11 +15,7 @@ enum TrashManager {
         }
     }
 
-    static var directory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        return base.appendingPathComponent("ClaudeSessionManager/Trash", isDirectory: true)
-    }
+    static var directory: URL { AppPaths.support.appendingPathComponent("Trash", isDirectory: true) }
 
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()

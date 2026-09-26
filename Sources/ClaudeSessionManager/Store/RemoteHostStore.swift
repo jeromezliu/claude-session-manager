@@ -18,17 +18,9 @@ final class RemoteHostStore: ObservableObject {
     }()
     private static let decoder = JSONDecoder()
 
-    private static var configURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        return base.appendingPathComponent("ClaudeSessionManager/remote-hosts.json")
-    }
+    private static var configURL: URL { AppPaths.support.appendingPathComponent("remote-hosts.json") }
 
-    private static var cacheRoot: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        return base.appendingPathComponent("ClaudeSessionManager/RemoteCache", isDirectory: true)
-    }
+    private static var cacheRoot: URL { AppPaths.support.appendingPathComponent("RemoteCache", isDirectory: true) }
 
     init() {
         load()

@@ -94,9 +94,7 @@ enum RemoteShell {
 
     /// Lazily writes the askpass helper (0700) into Application Support.
     static func askpassScriptURL() throws -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let url = base.appendingPathComponent("ClaudeSessionManager/csm-askpass.sh")
+        let url = AppPaths.support.appendingPathComponent("csm-askpass.sh")
         let script = "#!/bin/sh\nprintf '%s\\n' \"$CSM_SSH_PASSWORD\"\n"
         let fm = FileManager.default
         if (try? String(contentsOf: url, encoding: .utf8)) != script {

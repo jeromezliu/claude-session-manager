@@ -90,11 +90,33 @@ final class SessionStore: ObservableObject {
     func reload() async {
         isLoading = true
         errorMessage = nil
+        switch await scanAll(priority: .userInitiated) {
+        case .success(let r): groups = r.groups; hiddenCount = r.hidden
+        case .failure(let e): errorMessage = e.localizedDescription; groups = []; hiddenCount = 0
+        }
+        await loadTrash()
+        ensureWatchers()
+        isLoading = false
+    }
+
+    /// A rescan that doesn't toggle the loading spinner or surface errors
+    /// (for background refresh).
+    func refreshQuietly() async {
+        if case .success(let r) = await scanAll(priority: .utility) {
+            groups = r.groups
+            hiddenCount = r.hidden
+        }
+        await loadTrash()
+    }
+
+    /// Scan the local root plus every enabled remote mirror off the main
+    /// actor, then persist whatever the summary cache learned.
+    private func scanAll(priority: TaskPriority) async -> Result<ScanResult, Error> {
         let root = rootURL
         let includeTemp = showTemporarySessions
         let remoteRoots = enabledRemoteRoots()
-
-        let result: Result<ScanResult, Error> = await Task.detached(priority: .userInitiated) {
+        return await Task.detached(priority: priority) {
+            defer { SummaryCache.shared.persistIfNeeded() }
             do {
                 let local = try Self.scan(root: root, includeTemp: includeTemp)
                 return .success(Self.mergingRemotes(local, remoteRoots: remoteRoots, includeTemp: includeTemp))
@@ -102,14 +124,6 @@ final class SessionStore: ObservableObject {
                 return .failure(error)
             }
         }.value
-
-        switch result {
-        case .success(let r): groups = r.groups; hiddenCount = r.hidden
-        case .failure(let e): errorMessage = e.localizedDescription; groups = []; hiddenCount = 0
-        }
-        await loadTrash()
-        ensureWatchers()
-        isLoading = false
     }
 
     /// (host id, displayName, local mirror dir) for every enabled remote host.
@@ -163,22 +177,6 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    /// A rescan that doesn't toggle the loading spinner (for background refresh).
-    func refreshQuietly() async {
-        let root = rootURL
-        let includeTemp = showTemporarySessions
-        let remoteRoots = enabledRemoteRoots()
-        let result = await Task.detached(priority: .utility) {
-            guard let local = try? Self.scan(root: root, includeTemp: includeTemp) else { return nil as ScanResult? }
-            return Self.mergingRemotes(local, remoteRoots: remoteRoots, includeTemp: includeTemp)
-        }.value
-        if let r = result {
-            groups = r.groups
-            hiddenCount = r.hidden
-        }
-        await loadTrash()
-    }
-
     func loadTrash() async {
         trashEntries = await Task.detached(priority: .userInitiated) { TrashManager.list() }.value
     }
@@ -190,7 +188,8 @@ final class SessionStore: ObservableObject {
         let hidden: Int
     }
 
-    nonisolated static func scan(root: URL, includeTemp: Bool) throws -> ScanResult {
+    nonisolated static func scan(root: URL, includeTemp: Bool,
+                                 cache: SummaryCache = .shared) throws -> ScanResult {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue else {
@@ -216,9 +215,7 @@ final class SessionStore: ObservableObject {
         }
 
         // Parse (cached by mtime+size), then drop throwaway temp-dir sessions.
-        let parsed: [SessionSummary] = files.compactMap {
-            SummaryCache.shared.summary(for: $0.url, mtime: $0.mtime, size: $0.size)
-        }
+        let parsed = parseConcurrently(files, cache: cache)
         let summaries = includeTemp ? parsed : parsed.filter { !$0.isEphemeral }
         let hidden = parsed.count - summaries.count
 
@@ -239,6 +236,20 @@ final class SessionStore: ObservableObject {
         // Most-recently-active projects first.
         groups.sort { ($0.sessions.first?.sortDate ?? .distantPast) > ($1.sessions.first?.sortDate ?? .distantPast) }
         return ScanResult(groups: groups, hidden: hidden)
+    }
+
+    /// Parse (or fetch from cache) every file, spread across cores — a cold
+    /// cache means reading hundreds of MB of JSONL. Keeps `files` order.
+    nonisolated private static func parseConcurrently(_ files: [(url: URL, mtime: Date, size: Int)],
+                                                      cache: SummaryCache) -> [SessionSummary] {
+        var results = [SessionSummary?](repeating: nil, count: files.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: files.count) { i in
+            let f = files[i]
+            let summary = cache.summary(for: f.url, mtime: f.mtime, size: f.size)
+            lock.lock(); results[i] = summary; lock.unlock()
+        }
+        return results.compactMap { $0 }
     }
 
     // MARK: - Mutations

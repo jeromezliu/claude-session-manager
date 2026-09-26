@@ -16,6 +16,11 @@ let package = Package(
                 .product(name: "SwiftTerm", package: "SwiftTerm")
             ],
             path: "Sources/ClaudeSessionManager"
+        ),
+        .testTarget(
+            name: "ClaudeSessionManagerTests",
+            dependencies: ["ClaudeSessionManager"],
+            path: "Tests/ClaudeSessionManagerTests"
         )
     ]
 )
