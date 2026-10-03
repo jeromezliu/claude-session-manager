@@ -65,7 +65,7 @@ mkdir -p "${TAP_DIR}/Casks"
 # can leave this local clone behind, which otherwise rejects the push.
 git -C "$TAP_DIR" fetch origin --quiet && git -C "$TAP_DIR" reset --hard origin/main --quiet
 cp "$CASK" "${TAP_DIR}/Casks/"
-git -C "$TAP_DIR" add -A
+git -C "$TAP_DIR" add "$CASK"   # only the cask: never sweep in stray files (.DS_Store)
 if ! git -C "$TAP_DIR" diff --cached --quiet; then
   git -C "$TAP_DIR" -c user.email="jeromezliu@users.noreply.github.com" -c user.name="jeromezliu" \
       commit -m "claude-session-manager ${VERSION}"
