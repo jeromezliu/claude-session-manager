@@ -2,8 +2,7 @@ cask "claude-session-manager" do
   version "1.3.0"
   sha256 "47341855be3256e867fe590f31fc7ca66508d8438c3989fde3faee842cddf372"
 
-  url "https://github.com/jeromezliu/claude-session-manager/releases/download/v#{version}/ClaudeSessionManager-v#{version}.zip",
-      verified: "github.com/jeromezliu/claude-session-manager/"
+  url "https://github.com/jeromezliu/claude-session-manager/releases/download/v#{version}/ClaudeSessionManager-v#{version}.zip"
   name "Claude Session Manager"
   desc "Browse and manage local Claude Code sessions"
   homepage "https://github.com/jeromezliu/claude-session-manager"
