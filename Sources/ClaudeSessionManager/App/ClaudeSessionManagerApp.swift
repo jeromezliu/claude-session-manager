@@ -64,7 +64,9 @@ struct ClaudeSessionManagerApp: App {
 
         // Visible only while remote access is on: status and a kill switch.
         MenuBarExtra("Remote Access", systemImage: "antenna.radiowaves.left.and.right",
-                     isInserted: Binding(get: { remote.enabled }, set: { if !$0 { remote.turnOff() } })) {
+                     isInserted: Binding(get: { remote.enabled },
+                                         // Only a real on→off (the user removed the icon) turns it off.
+                                         set: { inserted in if !inserted && remote.enabled { remote.turnOff() } })) {
             RemoteMenuBarContent()
                 .environmentObject(remote)
                 .environmentObject(server)

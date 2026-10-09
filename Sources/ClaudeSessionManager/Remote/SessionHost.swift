@@ -52,6 +52,14 @@ final class SessionHost: ObservableObject {
             case .inEmbeddedTerminal: return "This session is running in the app's terminal. Close the terminal first."
             }
         }
+
+        /// Short, friendly wording for the composer's place.
+        var readOnlyNote: String {
+            switch self {
+            case .busyElsewhere(let e): return "Open in \(e.whereLabel) — read-only here."
+            case .inEmbeddedTerminal: return "Running in the terminal below — type there."
+            }
+        }
     }
 
     /// Why the app can't drive `sessionID` right now, if it can't.

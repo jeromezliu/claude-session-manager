@@ -19,9 +19,11 @@ struct SessionComposer: View {
                 LiveControls(hosted: live)
             }
             if let blocker = host.blocker(for: session.id), host.hosted(session.id) == nil {
-                Label(blocker.localizedDescription, systemImage: "lock")
+                Label(blocker.readOnlyNote, systemImage: "lock")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(blocker.localizedDescription + " Close it there to continue in the app.")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -40,34 +42,40 @@ struct SessionComposer: View {
         .background(.bar)
     }
 
+    /// Messages-style field: one line to start, grows to ~7, send button
+    /// inside the trailing edge.
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        let empty = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return HStack(alignment: .bottom, spacing: 6) {
             ZStack(alignment: .topLeading) {
                 if draft.isEmpty {
-                    Text("Message Claude…  (⌘↩ to send)")
+                    Text("Message Claude…")
                         .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 8)
+                        .padding(.leading, 5)
+                        .padding(.top, 1)
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $draft)
                     .font(.body)
                     .scrollContentBackground(.hidden)
-                    .frame(minHeight: 36, maxHeight: 140)
+                    .frame(minHeight: 20, maxHeight: 130)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(4)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-
             Button(action: send) {
-                Image(systemName: "arrow.up.circle.fill").font(.title2)
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(empty ? Color.secondary.opacity(0.4) : Color.accentColor)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .keyboardShortcut(.return, modifiers: .command)
-            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(empty)
             .help("Send (⌘↩)")
         }
+        .padding(.leading, 8)
+        .padding(.trailing, 5)
+        .padding(.vertical, 5)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.quaternary))
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
@@ -93,7 +101,7 @@ struct LiveControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(hosted.pending) { request in
-                RequestCard(request: request) { hosted.answer(request.id, $0) }
+                RequestCard(request: request, cwd: hosted.cwd) { hosted.answer(request.id, $0) }
             }
             HStack(spacing: 10) {
                 PhaseBadge(phase: hosted.phase)
@@ -107,9 +115,7 @@ struct LiveControls: View {
                 Spacer()
                 Picker("Mode", selection: Binding(get: { hosted.permissionMode },
                                                   set: { hosted.setPermissionMode($0) })) {
-                    Text("Ask before edits").tag("default")
-                    Text("Accept edits").tag("acceptEdits")
-                    Text("Plan only").tag("plan")
+                    ForEach(PermissionModes.choices, id: \.id) { Text($0.label).tag($0.id) }
                 }
                 .labelsHidden()
                 .fixedSize()
@@ -148,6 +154,8 @@ struct PhaseBadge: View {
 /// One approval / question / plan review.
 struct RequestCard: View {
     let request: PendingRequest
+    /// The session's folder, so paths can be shown relative to it.
+    var cwd: String = ""
     let onDecision: (RequestDecision) -> Void
 
     @State private var denyReason = ""
@@ -179,8 +187,12 @@ struct RequestCard: View {
             } icon: {
                 Image(systemName: "hand.raised").foregroundStyle(.orange)
             }
-            if let d = request.ask.description, !d.isEmpty { Text(d).foregroundStyle(.secondary) }
-            ToolInputPreview(toolName: request.ask.toolName, input: request.ask.input)
+            // The CLI's description often just repeats the file name; skip it then.
+            if let d = request.ask.description, !d.isEmpty,
+               d != request.ask.input["file_path"]?.stringValue.map({ ($0 as NSString).lastPathComponent }) {
+                Text(d).foregroundStyle(.secondary)
+            }
+            ToolInputPreview(toolName: request.ask.toolName, input: request.ask.input, cwd: cwd)
             if let blocked = request.ask.blockedPath {
                 Label("Outside the allowed folders: \(blocked)", systemImage: "folder.badge.questionmark")
                     .font(.caption).foregroundStyle(.secondary)
@@ -312,11 +324,12 @@ struct RequestCard: View {
 struct ToolInputPreview: View {
     let toolName: String
     let input: JSONValue
+    var cwd: String = ""
 
     var body: some View {
         switch toolName {
         case "Bash":
-            code(input["command"]?.stringValue ?? "")
+            code((input["command"]?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
         case "Edit", "MultiEdit":
             VStack(alignment: .leading, spacing: 4) {
                 path
@@ -327,11 +340,11 @@ struct ToolInputPreview: View {
         case "Write":
             VStack(alignment: .leading, spacing: 4) {
                 path
-                code(String((input["content"]?.stringValue ?? "").prefix(1500)))
+                code(String((input["content"]?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(1500)))
             }
         default:
             if let p = input["file_path"]?.stringValue ?? input["path"]?.stringValue {
-                Text(p).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                pathLabel(p)
             } else if let data = try? JSONSerialization.data(withJSONObject: input.anyValue, options: [.prettyPrinted, .sortedKeys]),
                       let s = String(data: data, encoding: .utf8), s.count > 2 {
                 code(String(s.prefix(1500)))
@@ -340,9 +353,20 @@ struct ToolInputPreview: View {
     }
 
     @ViewBuilder private var path: some View {
-        if let p = input["file_path"]?.stringValue {
-            Text(p).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+        if let p = input["file_path"]?.stringValue { pathLabel(p) }
+    }
+
+    /// One line, relative to the session folder (or ~), middle-truncated.
+    private func pathLabel(_ p: String) -> some View {
+        Label {
+            Text(DisplayPath.short(p, relativeTo: cwd))
+                .font(.system(.callout, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        } icon: {
+            Image(systemName: "doc").foregroundStyle(.secondary)
         }
+        .help(p)
     }
 
     private func code(_ s: String) -> some View {
@@ -448,9 +472,7 @@ struct NewChatSheet: View {
                 .padding(4)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
             Picker("Permissions", selection: $mode) {
-                Text("Ask before edits").tag("default")
-                Text("Accept edits").tag("acceptEdits")
-                Text("Plan only").tag("plan")
+                ForEach(PermissionModes.choices, id: \.id) { Text($0.label).tag($0.id) }
             }
             .fixedSize()
             HStack {
@@ -471,26 +493,77 @@ struct NewChatSheet: View {
     }
 }
 
-/// Shown while a new chat's transcript file doesn't exist yet.
+/// Shown while a new chat's transcript file doesn't exist yet: what was
+/// asked, the reply as it streams, and any approval it needs.
 struct StartingChatView: View {
     @ObservedObject var hosted: HostedSession
+    /// The first message, as sent.
+    var prompt: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("New Chat").font(.title3.weight(.semibold))
+                Label(DisplayPath.short(hosted.cwd), systemImage: "folder")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(hosted.cwd)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Label(hosted.cwd, systemImage: "folder").font(.callout).foregroundStyle(.secondary)
-                    LiveReplyView(hosted: hosted)
-                    if hosted.liveText.isEmpty && hosted.pending.isEmpty {
-                        HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Starting session…") }
-                            .foregroundStyle(.secondary)
+                    if !prompt.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("You", systemImage: "person.crop.circle.fill")
+                                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            Text(prompt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(12)
+                        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
                     }
+                    LiveReplyView(hosted: hosted)
                 }
                 .padding(24)
+                .frame(maxWidth: 860, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .overlay {
+                if hosted.liveText.isEmpty && hosted.pending.isEmpty && hosted.phase != .exited {
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Starting session…") }
+                        .foregroundStyle(.secondary)
+                }
             }
             Divider()
             LiveControls(hosted: hosted).padding(.bottom, 10)
         }
+    }
+}
+
+/// Permission modes the app offers (bypass stays out: it skips every check).
+enum PermissionModes {
+    struct Choice { let id: String; let label: String }
+    static let choices = [
+        Choice(id: "default", label: "Ask before edits"),
+        Choice(id: "acceptEdits", label: "Accept edits"),
+        Choice(id: "auto", label: "Auto"),
+        Choice(id: "plan", label: "Plan only"),
+    ]
+    static let allowedRemotely: Set<String> = Set(choices.map(\.id))
+}
+
+/// Paths for display: relative to a folder when inside it, else with ~.
+enum DisplayPath {
+    static func short(_ path: String, relativeTo base: String = "") -> String {
+        if !base.isEmpty {
+            let prefix = base.hasSuffix("/") ? base : base + "/"
+            if path.hasPrefix(prefix) { return String(path.dropFirst(prefix.count)) }
+        }
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
 }

@@ -359,7 +359,7 @@ final class RemoteConnection {
             server.audit(device?.name, "interrupted", id)
             send(.ack(id: mid, ok: true, error: nil, sessionID: id))
         case .setPermissionMode(let mid, let id, let mode):
-            guard ["default", "acceptEdits", "plan"].contains(mode) else {
+            guard PermissionModes.allowedRemotely.contains(mode) else {
                 return send(.ack(id: mid, ok: false, error: "Mode \(mode) isn't allowed remotely", sessionID: id))
             }
             server.audit(device?.name, "permission mode", "\(id) · \(mode)")
@@ -392,7 +392,7 @@ final class RemoteConnection {
         guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else {
             return send(.ack(id: mid, ok: false, error: "No such folder: \(cwd)", sessionID: nil))
         }
-        guard ["default", "acceptEdits", "plan"].contains(mode) else {
+        guard PermissionModes.allowedRemotely.contains(mode) else {
             return send(.ack(id: mid, ok: false, error: "Mode \(mode) isn't allowed remotely", sessionID: nil))
         }
         do {

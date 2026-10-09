@@ -372,4 +372,15 @@ final class RemoteServerTests: XCTestCase {
         XCTAssertTrue(log.contains("Test iPhone: connected"))
         XCTAssertTrue(log.contains("Test iPhone: message"))
     }
+
+    func testAutoModeIsAllowedRemotely() async throws {
+        _ = try addSession("s1")
+        let c = try await connectedClient()
+        try await c.send(.setPermissionMode(id: "m", sessionID: "s1", mode: "auto"))
+        guard case .ack(_, let ok, let err, _) = try await c.next(where: { if case .ack = $0 { return true }; return false })
+        else { return XCTFail() }
+        XCTAssertTrue(ok, err ?? "")
+        let req = transports.first?.sent.last?["request"] as? [String: Any]
+        XCTAssertEqual(req?["mode"] as? String, "auto")
+    }
 }

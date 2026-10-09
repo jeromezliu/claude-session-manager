@@ -20,6 +20,7 @@ extension ContentView {
             NewChatSheet(defaultFolder: store.newSessionDir) { folder, prompt, mode in
                 do {
                     selectedSessions = []
+                    startingPrompt = prompt
                     startingChat = try host.startNew(in: folder, prompt: prompt, permissionMode: mode)
                 } catch {
                     store.errorMessage = error.localizedDescription

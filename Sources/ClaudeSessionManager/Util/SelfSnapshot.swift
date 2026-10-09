@@ -7,6 +7,7 @@ import AppKit
 enum SelfSnapshot {
     static func runIfRequested() {
         guard let path = ProcessInfo.processInfo.environment["CSM_SNAPSHOT"], !path.isEmpty else { return }
+        bringToFront()
         // Give the scan + SwiftUI layout time to settle, then capture.
         let delay = ProcessInfo.processInfo.environment["CSM_SNAPSHOT_DELAY"].flatMap(Double.init) ?? 2.5
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
@@ -18,8 +19,16 @@ enum SelfSnapshot {
         }
     }
 
+    /// Launched from a background process (a script, a test), recent macOS
+    /// creates the window but doesn't put it on screen; snapshots need it there.
+    static func bringToFront() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.filter { $0.canBecomeMain }.forEach { $0.makeKeyAndOrderFront(nil) }
+    }
+
     /// Capture the current key window (e.g. an in-app terminal window).
     static func captureKeyWindow(to url: URL) {
+        bringToFront()
         let window = NSApp.keyWindow ?? NSApp.mainWindow
             ?? NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })
         guard let window else { return }

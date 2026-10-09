@@ -8,7 +8,13 @@ extension ContentView {
     /// When launched in snapshot mode, pick the first session so the detail pane
     /// shows a real transcript in the captured image.
     func autoSelectForSnapshot() {
-        guard ProcessInfo.processInfo.environment["CSM_SNAPSHOT"] != nil else { return }
+        let env = ProcessInfo.processInfo.environment
+        guard env["CSM_SNAPSHOT"] != nil else { return }
+        // CSM_SNAPSHOT_SESSION picks a specific session (e.g. an idle one, to show the composer).
+        if let id = env["CSM_SNAPSHOT_SESSION"], store.visibleSession(withID: id) != nil {
+            selectedSessions = [id]
+            return
+        }
         guard selectedSessions.isEmpty, let session = store.sections.first?.sessions.first else { return }
         selectedSessions = [session.id]
     }
@@ -74,6 +80,7 @@ extension ContentView {
     func maybeChatSnapshot() {
         let env = ProcessInfo.processInfo.environment
         guard let path = env["CSM_CHAT_SNAP"], !path.isEmpty, let dir = env["CSM_CHAT_DIR"] else { return }
+        SelfSnapshot.bringToFront()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             let chat: HostedSession
             do {
@@ -83,6 +90,7 @@ extension ContentView {
                 return
             }
             FileHandle.standardError.write(Data("CSM chat snapshot: started in \(dir)\n".utf8))
+            startingPrompt = env["CSM_CHAT_PROMPT"] ?? "Say hi"
             startingChat = chat
             Task { @MainActor in
                 for _ in 0..<120 where chat.pending.isEmpty {

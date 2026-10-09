@@ -35,6 +35,7 @@ struct ContentView: View {
     @State var showRemoteAccess = false
     /// A new headless chat whose transcript isn't listed yet.
     @State var startingChat: HostedSession?
+    @State var startingPrompt = ""
     @EnvironmentObject var host: SessionHost
     @EnvironmentObject var server: RemoteServer
     @State var remoteNewSessionHost: RemoteHost?
@@ -153,7 +154,7 @@ struct ContentView: View {
                                    onContinue: { store.continueSession(session) })
                 }
             } else if let chat = startingChat {
-                StartingChatView(hosted: chat)
+                StartingChatView(hosted: chat, prompt: startingPrompt)
             } else if let id = activeNewTerminal,
                       let terminal = terminals.session(for: id),
                       !terminal.isPoppedOut {

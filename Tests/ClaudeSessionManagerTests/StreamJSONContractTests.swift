@@ -123,4 +123,10 @@ final class StreamJSONContractTests: XCTestCase {
         XCTAssertEqual(canUseTool(rows).filter { $0["tool_name"] as? String == "Write" }.count, 0)
         XCTAssertEqual(outbound(rows, type: "result").last?["subtype"] as? String, "success")
     }
+
+    func testAutoModeStillAsksTheClientForQuestions() throws {
+        let tools = canUseTool(try fixture("auto")).compactMap { $0["tool_name"] as? String }
+        XCTAssertTrue(tools.contains("AskUserQuestion"), "questions reach the phone in auto mode")
+        XCTAssertEqual(outbound(try fixture("auto"), type: "result").last?["result"] as? String, "Apple")
+    }
 }

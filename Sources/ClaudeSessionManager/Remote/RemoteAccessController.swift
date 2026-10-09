@@ -83,11 +83,20 @@ struct AuditLog {
 final class RemoteAccessController: ObservableObject {
     enum Scope: String, CaseIterable { case thisMac, network }
 
-    @Published var enabled: Bool { didSet { save(); apply() } }
-    @Published var scope: Scope { didSet { save(); restart() } }
+    // Every setter acts only on a real change: SwiftUI may write the same
+    // value back (e.g. MenuBarExtra's isInserted), and acting on that each
+    // time would loop.
+    @Published var enabled: Bool { didSet { guard enabled != oldValue else { return }; save(); apply() } }
+    @Published var scope: Scope { didSet { guard scope != oldValue else { return }; save(); restart() } }
     /// Interface names allowed in `.network` scope; empty = all.
-    @Published var interfaces: Set<String> { didSet { save(); server.allowedInterfaces = interfaces.isEmpty ? nil : interfaces } }
-    @Published var keepAwake: Bool { didSet { save(); updatePower() } }
+    @Published var interfaces: Set<String> {
+        didSet {
+            guard interfaces != oldValue else { return }
+            save()
+            server.allowedInterfaces = interfaces.isEmpty ? nil : interfaces
+        }
+    }
+    @Published var keepAwake: Bool { didSet { guard keepAwake != oldValue else { return }; save(); updatePower() } }
     @Published private(set) var tlsError: String?
     @Published private(set) var recentAudit: [AuditLog.Entry] = []
 

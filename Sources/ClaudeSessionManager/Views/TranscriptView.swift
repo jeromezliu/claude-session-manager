@@ -76,11 +76,12 @@ struct TranscriptView: View {
     /// of context, so a narrow pane truncates instead of wrapping letters.
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 Text(session.title)
-                    .font(.title2.weight(.semibold))
-                    .lineLimit(2)
-                    .textSelection(.enabled)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(session.title)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 controls
                     .fixedSize()
@@ -91,6 +92,7 @@ struct TranscriptView: View {
                 if let branch = session.gitBranch, branch != "HEAD" {
                     Label(branch, systemImage: "arrow.triangle.branch")
                         .truncationMode(.middle)
+                        .help(branch)
                 }
                 if let host = session.remoteDisplayName {
                     Label(host, systemImage: "network").layoutPriority(1)
@@ -127,10 +129,13 @@ struct TranscriptView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .controlSize(.small)
             if tab == .conversation {
-                Toggle(isOn: $showNotes) { Image(systemName: "list.bullet.below.rectangle") }
-                    .toggleStyle(.button)
-                    .help(showNotes ? "Hide attachments & system events" : "Show attachments & system events")
+                Button { showNotes.toggle() } label: {
+                    Image(systemName: showNotes ? "eye" : "eye.slash")
+                }
+                .buttonStyle(.borderless)
+                .help(showNotes ? "Hide attachments & system events" : "Show attachments & system events")
             }
             Button { showInfo.toggle() } label: { Image(systemName: "info.circle") }
                 .buttonStyle(.borderless)
@@ -687,7 +692,10 @@ private struct ConversationItemView: View {
             Image(systemName: icon).foregroundStyle(tint)
             Text(title).font(.caption.weight(.semibold))
             Spacer()
-            if let date { Text(Fmt.full(date)).font(.caption).foregroundStyle(.tertiary) }
+            if let date {
+                Text(Fmt.short(date)).font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+                    .help(Fmt.full(date))
+            }
         }
         .foregroundStyle(.secondary)
     }
@@ -814,9 +822,10 @@ struct MarkdownText: View {
     private func view(for block: MarkdownBlock) -> some View {
         switch block {
         case .heading(let level, let text):
+            // Never smaller than body text: h1 > h2 > h3+ (bold body).
             Text(Markdown.inline(text))
-                .font(level <= 1 ? .title3.weight(.semibold) : level == 2 ? .headline : .subheadline.weight(.semibold))
-                .padding(.top, 4)
+                .font(level <= 1 ? .title2.weight(.semibold) : level == 2 ? .title3.weight(.semibold) : .headline)
+                .padding(.top, level <= 2 ? 8 : 4)
         case .paragraph(let text):
             Text(Markdown.inline(text)).lineSpacing(2)
         case .listItem(let marker, let indent, let text):
