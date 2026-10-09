@@ -1,9 +1,16 @@
 import SwiftUI
 
+/// A session in the middle column, laid out like a Mail message row:
+/// title + time, a preview line, then a short context line. Branch and token
+/// details live in the transcript header, not here.
 struct SessionRow: View {
     let session: SessionSummary
+    /// Show the session's project (off when the list is one project already).
+    var showsProject = true
+    /// The group it's filed under, shown as a colored dot + name.
+    var groupName: String? = nil
     // Observe the manager directly so the indicator appears/disappears even when
-    // the AppKit-backed sidebar List reuses this (otherwise unchanged) row.
+    // the AppKit-backed List reuses this (otherwise unchanged) row.
     @ObservedObject private var terminals = TerminalManager.shared
 
     private var activity: TerminalActivity? {
@@ -11,7 +18,7 @@ struct SessionRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             // Fixed-width gutter so every row's text aligns, dot or not.
             ZStack {
                 if let activity {
@@ -19,44 +26,63 @@ struct SessionRow: View {
                 }
             }
             .frame(width: 8)
-            .padding(.top, 5)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(session.title)
-                    .font(.body.weight(.medium))
-                    .lineLimit(2)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(session.title)
+                        .font(.body.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(Fmt.relative(session.modifiedAt))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
 
                 if let prompt = (session.lastPrompt ?? session.firstPrompt), prompt != session.title {
                     Text(prompt)
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
 
-                HStack(spacing: 8) {
-                    Label("\(session.messageCount)", systemImage: "bubble.left.and.bubble.right")
-                    if let branch = session.gitBranch, branch != "HEAD" {
-                        Label(branch, systemImage: "arrow.triangle.branch").lineLimit(1)
-                    }
-                    if session.totalOutputTokens > 0 {
-                        Label(Fmt.tokens(session.totalOutputTokens), systemImage: "cpu")
-                    }
-                    if let host = session.remoteDisplayName {
-                        Label(host, systemImage: "network").lineLimit(1)
-                    }
-                    if session.isArchived {
-                        Image(systemName: "archivebox").help("Archived in Claude Desktop")
-                    }
-                    Spacer()
-                    Text(Fmt.relative(session.modifiedAt))
-                }
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .labelStyle(.titleAndIcon)
+                contextLine
             }
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
         .help("Last modified \(Fmt.full(session.modifiedAt))")
+    }
+
+    /// Where the session lives: project · group · size, plus remote/archived marks.
+    private var contextLine: some View {
+        HStack(spacing: 10) {
+            if showsProject {
+                Label(session.projectName, systemImage: session.isScratch ? "tray" : "folder")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let groupName {
+                Label {
+                    Text(groupName).lineLimit(1)
+                } icon: {
+                    Image(systemName: "circle.fill")
+                        .imageScale(.small)
+                        .foregroundStyle(GroupColor.color(for: groupName))
+                }
+            }
+            Label("\(session.messageCount)", systemImage: "bubble.left")
+                .fixedSize()
+            if let host = session.remoteDisplayName {
+                Image(systemName: "network").help("On \(host)")
+            }
+            if session.isArchived {
+                Image(systemName: "archivebox").help("Archived in Claude Desktop")
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+        .foregroundStyle(.tertiary)
+        .labelStyle(.titleAndIcon)
     }
 }
 

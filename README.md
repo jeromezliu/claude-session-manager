@@ -59,23 +59,27 @@ cd claude-session-manager
 
 ## Features
 
-- **Browse & search** — sessions ordered by most recent conversation, organized
-  by group or by project (switch with the tag/folder button next to the tabs).
-  Live search across titles, prompts, paths, branches, and group names.
+- **Three-column layout** (like Mail) — the sidebar holds *All Sessions*,
+  *Skills*, *Trash*, your categories, groups (colored dots, like Finder tags)
+  and projects; the middle column lists the selection's sessions newest first;
+  the right shows the transcript. Organize the sidebar by group or by project
+  from the toolbar. Search (toolbar) looks across all sessions: titles,
+  prompts, paths, branches, and group names.
 - **Groups** — the sidebar groups you made in the Claude desktop app show up
   automatically (read-only: the desktop's files are never written). Right-click
   any session(s) → *Move to Group* to file it under a desktop group or a new
   group of your own; groups created here can be renamed or deleted from their
   header's context menu, and a local assignment overrides the desktop's.
-- **Categories** — a top level above groups and projects, shown as sidebar
-  sections (like Finder's): right-click a group or project → *Move to
-  Category* → *New Category…* to file it under, say, *Customers* or *Home*.
-  They apply in both the by-group and by-project layouts; collapsed state is
+- **Categories** — a top level above groups and projects: right-click a group
+  or project → *Move to Category* → *New Category…* to file it under, say,
+  *Customers* or *Home*. Selecting a category lists all of its sessions. They
+  apply in both the by-group and by-project layouts; collapsed state is
   remembered.
-- **Drag & drop** — drag sessions (the whole selection, if the dragged one is
-  selected) onto a group to file them there, or onto *Ungrouped* to take them
-  out; drag a group/project onto a category header (or any row inside it) to
-  move it in, or onto *Groups*/*Projects* to move it back out.
+- **Drag & drop** — drag sessions from the middle column (the whole
+  selection, if the dragged one is selected) onto a group to file them there,
+  onto *Ungrouped* to take them out, or onto *Trash* (asks first); drag a
+  group/project onto a category (or any row inside it) to move it in, or onto
+  the *Groups*/*Projects* header to move it back out.
 - **Tidy desktop sessions** — desktop sessions use the desktop app's titles;
   worktree sessions (`<repo>/.claude/worktrees/<name>`) are listed under their
   repository; folder-less "scratch" sessions share one *Scratch* section; and

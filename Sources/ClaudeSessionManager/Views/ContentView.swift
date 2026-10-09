@@ -7,6 +7,8 @@ struct ContentView: View {
     @EnvironmentObject var remoteHosts: RemoteHostStore
     @ObservedObject var terminals = TerminalManager.shared
 
+    /// Sidebar selection: what the middle column lists.
+    @State var sidebarSelection: SidebarSelection? = .allSessions
     @State var selectedSessions: Set<SessionSummary.ID> = []
     @State var selectedSkill: SkillInfo.ID?
     @State var showNewSkill = false
@@ -32,23 +34,21 @@ struct ContentView: View {
     @State var remoteNewSessionHost: RemoteHost?
 
     private var mainScene: some View {
-        GeometryReader { geo in
         NavigationSplitView {
+            // Column widths go through the split view itself (a plain
+            // .frame(minWidth:) pins the content and makes dividers snap).
             sidebar
-                // Sized through the split view itself (a plain .frame(minWidth:)
-                // would pin the content's width and make the sidebar snap
-                // instead of sliding). The max is tied to the window width so
-                // the saved divider position always fits next to the detail —
-                // otherwise a narrow window expands the sidebar to whatever
-                // space is available and then jumps to the saved width.
-                .navigationSplitViewColumnWidth(
-                    min: 240, ideal: 320,
-                    max: max(280, min(520, geo.size.width - 560)))
+                .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 320)
+        } content: {
+            contentColumn
+                .navigationSplitViewColumnWidth(min: 260, ideal: 340, max: 520)
         } detail: {
             detail
         }
-        .searchable(text: $store.searchText, placement: .sidebar, prompt: "Search sessions")
+        .searchable(text: $store.searchText, placement: .toolbar, prompt: searchPrompt)
         .toolbar { toolbarContent }
+        .onChange(of: sidebarSelection) { sel in syncViewMode(to: sel) }
+        .onChange(of: store.viewMode) { mode in syncSidebar(to: mode) }
         .onChange(of: store.sessions.count) { _ in autoSelectForSnapshot() }
         .onChange(of: selectedSessions) { _ in terminalMaximized = false }
         .onChange(of: remoteHosts.hosts) { _ in
@@ -61,6 +61,41 @@ struct ContentView: View {
             if let newID, activeNewTerminal != nil { activeNewTerminal = newID }
         }
         .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot(); maybeSkillsSnapshot() }
+    }
+
+    private var searchPrompt: String {
+        switch store.viewMode {
+        case .sessions: return "Search all sessions"
+        case .skills: return "Search skills"
+        case .trash: return "Search trash"
+        }
+    }
+
+    /// The sidebar picks the mode (Skills / Trash / sessions) …
+    private func syncViewMode(to selection: SidebarSelection?) {
+        let mode: ViewMode
+        switch selection ?? .allSessions {
+        case .skills: mode = .skills
+        case .trash: mode = .trash
+        default: mode = .sessions
+        }
+        if store.viewMode != mode { store.viewMode = mode }
+        // Keep a selected session only if the new list still shows it.
+        if mode == .sessions, !selectedSessions.isEmpty {
+            let listed = Set(store.listedSessions(for: selection ?? .allSessions).map(\.id))
+            if selectedSessions.isDisjoint(with: listed) { selectedSessions = [] }
+        }
+    }
+
+    /// … and code that switches mode directly (e.g. after creating a skill)
+    /// moves the sidebar along.
+    private func syncSidebar(to mode: ViewMode) {
+        switch (mode, sidebarSelection) {
+        case (.skills, .skills?), (.trash, .trash?): return
+        case (.skills, _): sidebarSelection = .skills
+        case (.trash, _): sidebarSelection = .trash
+        case (.sessions, .skills?), (.sessions, .trash?), (.sessions, nil): sidebarSelection = .allSessions
+        case (.sessions, _): return
         }
     }
 

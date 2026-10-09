@@ -2,38 +2,27 @@ import SwiftUI
 import AppKit
 
 extension ContentView {
-    // MARK: - Sidebar
+    // MARK: - Columns
 
-    var sidebar: some View {
+    var sidebar: some View { sidebarList }
+
+    /// Middle column: the sessions of the sidebar selection, or the Skills /
+    /// Trash lists.
+    var contentColumn: some View {
         Group {
             switch store.viewMode {
-            case .sessions: sessionsList
-            case .skills: skillsList
-            case .trash: trashList
+            case .sessions: sessionsContent
+            case .skills: skillsList.navigationTitle("Skills")
+            case .trash: trashList.navigationTitle("Trash")
             }
         }
-        .safeAreaInset(edge: .top) { modeTabs }
         .safeAreaInset(edge: .bottom) { footer }
-    }
-
-    private var modeTabs: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Picker("View", selection: $store.viewMode) {
-                    Text("Sessions").tag(ViewMode.sessions)
-                    Text("Skills\(skills.skills.isEmpty ? "" : " (\(skills.skills.count))")").tag(ViewMode.skills)
-                    Text("Trash\(store.trashEntries.isEmpty ? "" : " (\(store.trashEntries.count))")").tag(ViewMode.trash)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+        .toolbar {
+            ToolbarItemGroup {
                 if store.viewMode == .sessions { organizationPicker }
                 RefreshButton { refreshCurrentTab() }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            Divider()
         }
-        .background(.bar)
     }
 
     private func refreshCurrentTab() {
@@ -73,7 +62,7 @@ extension ContentView {
                     }
             }
         }
-        .listStyle(.sidebar)
+        .listStyle(.inset)
         .overlay {
             if skills.skills.isEmpty {
                 ContentUnavailableView_Compat(
@@ -102,7 +91,7 @@ extension ContentView {
                     }
             }
         }
-        .listStyle(.sidebar)
+        .listStyle(.inset)
         .overlay {
             if store.trashEntries.isEmpty {
                 ContentUnavailableView_Compat(
@@ -161,13 +150,9 @@ extension ContentView {
     }
 
     private var sessionsCountLabel: String {
-        let sections = store.sections
-        let listed = sections.reduce(0) { $0 + $1.sessions.count }
-        let groupCount = sections.filter { $0.groupName != nil }.count
-        var s = store.organization == .groups
-            ? "\(groupCount) groups · \(listed) sessions"
-            : "\(sections.count) projects · \(listed) sessions"
-        let remote = sections.flatMap(\.sessions).filter(\.isRemote).count
+        let listed = store.listedSessions(for: sidebarSelection ?? .allSessions)
+        var s = "\(listed.count) sessions"
+        let remote = listed.filter(\.isRemote).count
         if remote > 0 {
             s += " · \(remote) remote"
         }

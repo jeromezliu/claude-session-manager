@@ -192,3 +192,13 @@ enum SessionGrouping {
         return categories + topLevel.map { .section($0) }
     }
 }
+
+/// What the sidebar has selected; the middle column lists its sessions.
+enum SidebarSelection: Hashable {
+    case allSessions
+    case skills
+    case trash
+    case category(String)
+    /// A group or project, by `SessionSection.id`.
+    case section(String)
+}

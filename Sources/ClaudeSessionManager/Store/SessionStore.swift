@@ -74,21 +74,58 @@ final class SessionStore: ObservableObject {
 
     private var archivedHidden: Bool { !showArchivedSessions }
 
-    /// Sessions currently listed: archived ones dropped unless shown, then
-    /// the search filter (which also matches a session's group name).
+    /// Sessions the app lists: archived ones dropped unless shown.
     var visibleSessions: [SessionSummary] {
-        let base = archivedHidden ? sessions.filter { !$0.isArchived } : sessions
+        archivedHidden ? sessions.filter { !$0.isArchived } : sessions
+    }
+
+    var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    /// Search across every visible session (titles, prompts, paths, branches
+    /// and group names), newest first.
+    var searchResults: [SessionSummary] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return base }
-        return base.filter { s in
+        guard !q.isEmpty else { return visibleSessions }
+        return visibleSessions.filter { s in
             s.matches(q) || (group(of: s.id)?.lowercased().contains(q) ?? false)
         }
     }
 
-    /// Sidebar sections for the current organization.
+    /// Group / project sections for the current organization (unaffected by
+    /// search, so sidebar counts stay put while typing).
     var sections: [SessionSection] {
         SessionGrouping.sections(for: visibleSessions, organization: organization,
                                  local: localMeta, desktop: desktop)
+    }
+
+    /// Sessions for the middle column: search results while searching,
+    /// otherwise what the sidebar selection holds (newest first).
+    func listedSessions(for selection: SidebarSelection) -> [SessionSummary] {
+        if isSearching { return searchResults }
+        switch selection {
+        case .allSessions, .skills, .trash:
+            return visibleSessions
+        case .category(let name):
+            let members = sidebarItems.lazy.compactMap { item -> SessionCategory? in
+                if case .category(let c) = item, c.name == name { return c }
+                return nil
+            }.first?.sections.flatMap(\.sessions) ?? []
+            return members.sorted { $0.sortDate > $1.sortDate }
+        case .section(let id):
+            return sections.first { $0.id == id }?.sessions ?? []
+        }
+    }
+
+    /// Display name for a sidebar selection (the middle column's title).
+    func title(for selection: SidebarSelection) -> String {
+        if isSearching { return "Search Results" }
+        switch selection {
+        case .allSessions: return "All Sessions"
+        case .skills: return "Skills"
+        case .trash: return "Trash"
+        case .category(let name): return name
+        case .section(let id): return sections.first { $0.id == id }?.name ?? "Sessions"
+        }
     }
 
     /// Top-level sidebar entries: categories (holding groups/projects), then
