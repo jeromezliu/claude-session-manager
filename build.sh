@@ -20,7 +20,28 @@ done
 APP_NAME="ClaudeSessionManager"
 BUNDLE_ID="com.jerome.claudesessionmanager"
 
-echo "▶ Building ($CONFIG)…"
+# Version stamped into Info.plist. release.sh passes APP_VERSION; otherwise
+# derive it from the latest v* tag: exactly on a tag → "1.3.0", past it →
+# "1.3.0+2.fc9b2db" (2 commits later), plus ".dirty" for uncommitted changes.
+if [[ -n "${APP_VERSION:-}" ]]; then
+    SHORT_VERSION="$APP_VERSION"
+    FULL_VERSION="$APP_VERSION"
+else
+    DESCRIBE="$(git describe --tags --match 'v*' --dirty 2>/dev/null || true)"
+    if [[ "$DESCRIBE" =~ ^v([0-9][^-]*)(-([0-9]+)-g([0-9a-f]+))?(-dirty)?$ ]]; then
+        SHORT_VERSION="${BASH_REMATCH[1]}"
+        FULL_VERSION="$SHORT_VERSION"
+        [[ -n "${BASH_REMATCH[3]}" ]] && FULL_VERSION+="+${BASH_REMATCH[3]}.${BASH_REMATCH[4]}"
+        [[ -n "${BASH_REMATCH[5]}" ]] && FULL_VERSION+="$([[ "$FULL_VERSION" == *+* ]] && echo . || echo +)dirty"
+    else
+        SHORT_VERSION="0.0.0"
+        FULL_VERSION="0.0.0+dev"
+    fi
+fi
+# CFBundleVersion must be numeric: use the commit count.
+BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+
+echo "▶ Building ${FULL_VERSION} ($CONFIG)…"
 swift build -c "$CONFIG"
 
 BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)"
@@ -43,8 +64,9 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
     <key>CFBundleExecutable</key><string>${APP_NAME}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleVersion</key><string>1.0</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>${BUILD_NUMBER}</string>
+    <key>CFBundleShortVersionString</key><string>${SHORT_VERSION}</string>
+    <key>CSMFullVersion</key><string>${FULL_VERSION}</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>

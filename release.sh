@@ -32,7 +32,7 @@ trap restore_acct EXIT
 gh auth switch --user "$RELEASE_ACCT" >/dev/null 2>&1 || true
 
 echo "▶ Building ${TAG}…"
-./build.sh >/dev/null
+APP_VERSION="$VERSION" ./build.sh >/dev/null
 ( cd build && rm -f "${APP}-${TAG}.zip" \
   && ditto -c -k --sequesterRsrc --keepParent "${APP}.app" "${APP}-${TAG}.zip" )
 SHA="$(shasum -a 256 "$ZIP" | awk '{print $1}')"

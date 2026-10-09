@@ -128,6 +128,8 @@ extension ContentView {
                 }
                 Divider()
                 Button("Manage Remote Hosts…") { showRemoteHosts = true }
+                Divider()
+                Button("Version \(AppInfo.version)") {}.disabled(true)
             } label: {
                 Label("Options", systemImage: "ellipsis.circle")
             }
