@@ -97,12 +97,11 @@ enum SessionParser {
             case "user":
                 messageCount += 1
                 if let t = parseDate(obj["timestamp"]) { lastActivityAt = t }
-                if let msg = obj["message"] as? [String: Any] {
-                    let t = firstText(from: msg["content"])
-                    if let t, !t.isEmpty {
-                        if firstPrompt == nil { firstPrompt = t }
-                        lastPrompt = t
-                    }
+                // isMeta turns are harness-generated (caveats, reminders), not typed.
+                if (obj["isMeta"] as? Bool) != true, let msg = obj["message"] as? [String: Any],
+                   let t = firstText(from: msg["content"]) {
+                    if firstPrompt == nil { firstPrompt = t }
+                    lastPrompt = t
                 }
             case "assistant":
                 messageCount += 1
@@ -123,7 +122,7 @@ enum SessionParser {
             case "ai-title":
                 if let t = obj["aiTitle"] as? String, !t.isEmpty { title = t }
             case "last-prompt":
-                if let p = obj["lastPrompt"] as? String, !p.isEmpty { lastPrompt = p }
+                if let p = (obj["lastPrompt"] as? String).flatMap(PromptText.clean) { lastPrompt = p }
             default:
                 break
             }
@@ -205,7 +204,7 @@ enum SessionParser {
         switch type {
         case "user":
             let msg = obj["message"] as? [String: Any]
-            let blocks = contentBlocks(from: msg?["content"], toolResult: obj["toolUseResult"])
+            let blocks = contentBlocks(from: msg?["content"], toolResult: obj["toolUseResult"], cleanText: true)
             return blocks.isEmpty ? nil : .init(id: index, kind: .user, timestamp: ts, model: nil, blocks: blocks)
         case "assistant":
             let msg = obj["message"] as? [String: Any]
@@ -226,31 +225,37 @@ enum SessionParser {
 
     // MARK: - Content helpers
 
-    /// First plain-text string from a message content (String or block array).
+    /// First text the user actually typed in a message content (String or
+    /// block array), with harness-injected tags removed (see `PromptText`).
     private static func firstText(from content: Any?) -> String? {
-        if let s = content as? String { return s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if let s = content as? String { return PromptText.clean(s) }
         if let arr = content as? [[String: Any]] {
             for b in arr where (b["type"] as? String) == "text" {
-                if let t = b["text"] as? String { return t.trimmingCharacters(in: .whitespacesAndNewlines) }
+                if let t = (b["text"] as? String).flatMap(PromptText.clean) { return t }
             }
         }
         return nil
     }
 
     /// Convert a message `content` (+ optional toolUseResult) into display blocks.
-    private static func contentBlocks(from content: Any?, toolResult: Any?) -> [TranscriptEvent.Block] {
+    /// `cleanText` strips harness-injected tags from text blocks (user turns).
+    private static func contentBlocks(from content: Any?, toolResult: Any?,
+                                      cleanText: Bool = false) -> [TranscriptEvent.Block] {
         var blocks: [TranscriptEvent.Block] = []
+        func text(_ raw: String?) -> String? {
+            guard let raw else { return nil }
+            if cleanText { return PromptText.clean(raw) }
+            let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t
+        }
 
         if let s = content as? String {
-            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { blocks.append(.text(trimmed)) }
+            if let t = text(s) { blocks.append(.text(t)) }
         } else if let arr = content as? [[String: Any]] {
             for b in arr {
                 switch b["type"] as? String {
                 case "text":
-                    if let t = (b["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
-                        blocks.append(.text(t))
-                    }
+                    if let t = text(b["text"] as? String) { blocks.append(.text(t)) }
                 case "thinking":
                     if let t = (b["thinking"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
                         blocks.append(.thinking(t))

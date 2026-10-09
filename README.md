@@ -59,8 +59,20 @@ cd claude-session-manager
 
 ## Features
 
-- **Browse & search** — sessions grouped by project, ordered by most recent
-  conversation. Live search across titles, prompts, paths, and branches.
+- **Browse & search** — sessions ordered by most recent conversation, organized
+  by group or by project (switch with the tag/folder button next to the tabs).
+  Live search across titles, prompts, paths, branches, and group names.
+- **Groups** — the sidebar groups you made in the Claude desktop app show up
+  automatically (read-only: the desktop's files are never written). Right-click
+  any session(s) → *Move to Group* to file it under a desktop group or a new
+  group of your own; groups created here can be renamed or deleted from their
+  header's context menu, and a local assignment overrides the desktop's.
+- **Tidy desktop sessions** — desktop sessions use the desktop app's titles;
+  worktree sessions (`<repo>/.claude/worktrees/<name>`) are listed under their
+  repository; folder-less "scratch" sessions share one *Scratch* section; and
+  injected text (`<system-reminder>`, task notifications, slash-command tags) is
+  stripped from titles, previews and transcripts. Sessions archived in the
+  desktop app are hidden unless *Show archived sessions* is on.
 - **Multi-select** — ⌘/⇧-click to select several sessions and move them to the
   Trash in one go.
 - **Transcript viewer** — newest turns first, with attachments / tool calls /
@@ -87,6 +99,8 @@ cd claude-session-manager
   the session still resumes correctly.
 - **Auto-refresh** — the list and open transcript update live as sessions change
   on disk; no need to relaunch.
+- **Version** — the running version is shown at the bottom of the ⋯ menu (and
+  in *About*); local builds read e.g. `1.3.0+2.c982008` (2 commits past v1.3.0).
 - **Hides temp sessions** — throwaway sessions tools spawn in `$TMPDIR` (e.g.
   Claude's `claude-analysis-<uuid>` logs) are hidden by default, with a
   *Show temporary sessions* toggle and a "N hidden" note in the footer.
@@ -112,7 +126,10 @@ Sources/ClaudeSessionManager/
   App/       @main entry, window, menus
   Models/    SessionSummary, TranscriptEvent, TrashEntry, RemoteHost (Sendable value types)
   Store/     SessionParser     – JSONL → summaries / transcript
+             PromptText        – strips harness-injected tags from user text
              SessionStore      – scans local + remote roots, mutations, auto-refresh
+             SessionGroups     – group/project sidebar sections, local groups & titles
+             DesktopMetadata   – read-only view of Claude Desktop titles & groups
              SummaryCache      – mtime/size-keyed parse cache
              TrashManager      – app-managed trash (move / recover / purge)
              RemoteHostStore   – remote host config, rsync mirroring, connection test

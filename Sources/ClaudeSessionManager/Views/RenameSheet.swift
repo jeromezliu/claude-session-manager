@@ -4,25 +4,46 @@ struct RenameSheet: View {
     let session: SessionSummary
     let onSave: (String) -> Void
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var title: String
+    var body: some View {
+        NameSheet(title: "Rename Session",
+                  message: "Sets a new title by appending an ai-title entry. The transcript itself is left untouched, so the session can still be resumed.",
+                  placeholder: "Title", initial: session.title, onSave: onSave)
+    }
+}
 
-    init(session: SessionSummary, onSave: @escaping (String) -> Void) {
-        self.session = session
+/// A one-field sheet for naming something (a session title, a group).
+struct NameSheet: View {
+    let title: String
+    var message: String? = nil
+    var placeholder = "Name"
+    var actionTitle = "Save"
+    let onSave: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+
+    init(title: String, message: String? = nil, placeholder: String = "Name", initial: String = "",
+         actionTitle: String = "Save", onSave: @escaping (String) -> Void) {
+        self.title = title
+        self.message = message
+        self.placeholder = placeholder
+        self.actionTitle = actionTitle
         self.onSave = onSave
-        _title = State(initialValue: session.title)
+        _text = State(initialValue: initial)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Rename Session")
+            Text(title)
                 .font(.headline)
 
-            Text("Sets a new title by appending an ai-title entry. The transcript itself is left untouched, so the session can still be resumed.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if let message {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
-            TextField("Title", text: $title)
+            TextField(placeholder, text: $text)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(save)
 
@@ -30,9 +51,9 @@ struct RenameSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Save", action: save)
+                Button(actionTitle, action: save)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(20)
@@ -40,7 +61,7 @@ struct RenameSheet: View {
     }
 
     private func save() {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         onSave(trimmed)
         dismiss()

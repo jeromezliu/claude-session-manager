@@ -12,7 +12,10 @@ struct ContentView: View {
     @State var showNewSkill = false
     @State var removeSkillTarget: SkillInfo?
     @State var selectedTrash: TrashEntry.ID?
-    @State var collapsedProjects: Set<String> = []
+    /// Section ids (groups / projects) the user collapsed.
+    @State var collapsedSections: Set<String> = []
+    /// Pending "New Group…" / "Rename Group…" sheet.
+    @State var groupSheet: GroupSheetRequest?
     @State var renameTarget: SessionSummary?
     @State var deleteTarget: SessionSummary?
     @State var purgeTarget: TrashEntry?
@@ -43,7 +46,7 @@ struct ContentView: View {
         }
         .searchable(text: $store.searchText, placement: .sidebar, prompt: "Search sessions")
         .toolbar { toolbarContent }
-        .onChange(of: store.groups.count) { _ in autoSelectForSnapshot() }
+        .onChange(of: store.sessions.count) { _ in autoSelectForSnapshot() }
         .onChange(of: selectedSessions) { _ in terminalMaximized = false }
         .onChange(of: remoteHosts.hosts) { _ in
             Task { await store.reload() }
@@ -65,10 +68,7 @@ struct ContentView: View {
     // MARK: - Detail
 
     func session(for id: SessionSummary.ID) -> SessionSummary? {
-        for g in store.filteredGroups {
-            if let s = g.sessions.first(where: { $0.id == id }) { return s }
-        }
-        return nil
+        store.visibleSession(withID: id)
     }
 
     var selectedSummary: SessionSummary? {
@@ -187,5 +187,19 @@ struct ContentView: View {
             ? dir : URL(fileURLWithPath: NSHomeDirectory())
         selectedSessions = []
         activeNewTerminal = store.newSession(inDirectory: target)
+    }
+}
+
+/// What the group-name sheet is for.
+enum GroupSheetRequest: Identifiable {
+    /// Create a group and move these sessions into it.
+    case create(Set<SessionSummary.ID>)
+    case rename(String)
+
+    var id: String {
+        switch self {
+        case .create(let ids): return "create:" + ids.sorted().joined(separator: ",")
+        case .rename(let name): return "rename:" + name
+        }
     }
 }

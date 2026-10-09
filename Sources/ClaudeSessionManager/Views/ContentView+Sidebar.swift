@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 extension ContentView {
     // MARK: - Sidebar
@@ -25,6 +26,7 @@ extension ContentView {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                if store.viewMode == .sessions { organizationPicker }
                 RefreshButton { refreshCurrentTab() }
             }
             .padding(.horizontal, 8)
@@ -42,20 +44,20 @@ extension ContentView {
         }
     }
 
-    // MARK: - Sessions list (projects → sessions, sectioned)
+    // MARK: - Sessions list (groups / projects → sessions, sectioned)
 
     private var sessionsList: some View {
         List(selection: $selectedSessions) {
-            ForEach(store.filteredGroups) { group in
+            ForEach(store.sections) { section in
                 Section {
-                    if !collapsedProjects.contains(group.id) {
-                        ForEach(group.sessions) { session in
+                    if !collapsedSections.contains(section.id) {
+                        ForEach(section.sessions) { session in
                             SessionRow(session: session)
                                 .tag(session.id)
                         }
                     }
                 } header: {
-                    projectHeader(group)
+                    sectionHeader(section)
                 }
             }
         }
@@ -67,9 +69,9 @@ extension ContentView {
         }
         .listStyle(.sidebar)
         .overlay {
-            if store.isLoading && store.groups.isEmpty {
+            if store.isLoading && store.sessions.isEmpty {
                 ProgressView("Scanning…")
-            } else if store.groups.isEmpty {
+            } else if store.sessions.isEmpty {
                 ContentUnavailableView_Compat(
                     title: "No sessions found",
                     systemImage: "tray",
@@ -79,12 +81,12 @@ extension ContentView {
         }
     }
 
-    private func projectHeader(_ group: ProjectGroup) -> some View {
-        let collapsed = collapsedProjects.contains(group.id)
+    private func sectionHeader(_ section: SessionSection) -> some View {
+        let collapsed = collapsedSections.contains(section.id)
         return Button {
             withAnimation(.easeInOut(duration: 0.12)) {
-                if collapsed { collapsedProjects.remove(group.id) }
-                else { collapsedProjects.insert(group.id) }
+                if collapsed { collapsedSections.remove(section.id) }
+                else { collapsedSections.insert(section.id) }
             }
         } label: {
             HStack(spacing: 6) {
@@ -92,18 +94,18 @@ extension ContentView {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .frame(width: 10)
-                Image(systemName: "folder")
+                Image(systemName: sectionIcon(section.kind))
                     .foregroundStyle(.secondary)
-                Text(group.name)
+                Text(section.name)
                     .lineLimit(1)
-                if let host = group.sessions.first?.remoteDisplayName {
+                if case .project = section.kind, let host = section.sessions.first?.remoteDisplayName {
                     Label(host, systemImage: "network")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .labelStyle(.titleAndIcon)
                 }
                 Spacer()
-                Text("\(group.sessions.count)")
+                Text("\(section.sessions.count)")
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .padding(.trailing, 8)
@@ -111,7 +113,58 @@ extension ContentView {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(group.path)
+        .help(sectionHelp(section))
+        .contextMenu { sectionMenu(section) }
+    }
+
+    private func sectionIcon(_ kind: SessionSection.Kind) -> String {
+        switch kind {
+        case .group: return "tag"
+        case .project: return "folder"
+        case .scratch: return "tray"
+        }
+    }
+
+    private func sectionHelp(_ section: SessionSection) -> String {
+        switch section.kind {
+        case .group(let desktop, _):
+            return desktop ? "Group from Claude Desktop — rename or delete it there" : "Group created in this app"
+        case .project: return section.path ?? section.name
+        case .scratch: return "Claude Desktop sessions started without a project folder"
+        }
+    }
+
+    @ViewBuilder
+    private func sectionMenu(_ section: SessionSection) -> some View {
+        if case .group(let desktop, _) = section.kind {
+            if desktop {
+                Button("Managed in Claude Desktop") {}.disabled(true)
+            } else {
+                Button("Rename Group…") { groupSheet = .rename(section.name) }
+                Button("Delete Group", role: .destructive) { store.deleteGroup(section.name) }
+            }
+        } else if let path = section.path {
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            }
+        }
+    }
+
+    /// Group / project switch shown next to the tabs on the Sessions tab.
+    var organizationPicker: some View {
+        Menu {
+            Picker("Organize Sessions", selection: $store.organization) {
+                ForEach(SessionOrganization.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: store.organization == .groups ? "tag" : "folder")
+                .frame(width: 22, height: 22)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Organize sessions: \(store.organization.label)")
     }
 
     // MARK: - Skills list
@@ -216,8 +269,8 @@ extension ContentView {
         switch store.viewMode {
         case .sessions:
             footerBar(summary: sessionsCountLabel,
-                      help: store.hiddenCount > 0 && !store.showTemporarySessions
-                            ? "\(store.hiddenCount) temporary/analysis sessions are hidden. Toggle in the ⋯ menu." : "")
+                      help: store.hiddenCount > 0
+                            ? "Temporary and archived sessions are hidden. Show them from the ⋯ menu." : "")
         case .skills:
             footerBar(summary: skillsCountLabel)
         case .trash:
@@ -231,12 +284,17 @@ extension ContentView {
     }
 
     private var sessionsCountLabel: String {
-        var s = "\(store.filteredGroups.count) projects · \(store.totalSessions) sessions"
-        let remote = store.filteredGroups.flatMap { $0.sessions }.filter(\.isRemote).count
+        let sections = store.sections
+        let listed = sections.reduce(0) { $0 + $1.sessions.count }
+        let groupCount = sections.filter { $0.groupName != nil }.count
+        var s = store.organization == .groups
+            ? "\(groupCount) groups · \(listed) sessions"
+            : "\(sections.count) projects · \(listed) sessions"
+        let remote = sections.flatMap(\.sessions).filter(\.isRemote).count
         if remote > 0 {
             s += " · \(remote) remote"
         }
-        if store.hiddenCount > 0 && !store.showTemporarySessions {
+        if store.hiddenCount > 0 {
             s += " · \(store.hiddenCount) hidden"
         }
         return s

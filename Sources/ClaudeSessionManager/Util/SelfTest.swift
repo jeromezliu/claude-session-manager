@@ -80,12 +80,12 @@ enum SelfTest {
             let root = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/projects")
             if let withTemp = try? SessionStore.scan(root: root, includeTemp: true),
                let noTemp = try? SessionStore.scan(root: root, includeTemp: false) {
-                let visibleWith = withTemp.groups.flatMap { $0.sessions }.count
-                let visibleNo = noTemp.groups.flatMap { $0.sessions }.count
+                let visibleWith = withTemp.sessions.count
+                let visibleNo = noTemp.sessions.count
                 check("ephemeral-some-hidden", noTemp.hidden > 0)
                 check("ephemeral-count-consistent", visibleWith - visibleNo == noTemp.hidden)
                 check("ephemeral-no-analysis-visible",
-                      !noTemp.groups.contains { $0.path.contains("claude-analysis") || $0.path.hasPrefix("/private/var/folders/") })
+                      !noTemp.sessions.contains { $0.workingDirectory.contains("claude-analysis") || $0.workingDirectory.hasPrefix("/private/var/folders/") })
                 lines.append("INFO visible=\(visibleNo) hidden=\(noTemp.hidden) (withTemp=\(visibleWith))")
             } else {
                 lines.append("FAIL ephemeral-scan (scan threw)")

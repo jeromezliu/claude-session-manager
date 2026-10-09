@@ -1,14 +1,6 @@
 import Foundation
 import SwiftUI
 
-/// A project = a folder of sessions, grouped for the sidebar.
-struct ProjectGroup: Identifiable, Hashable {
-    let id: String          // projectFolder
-    let name: String        // friendly name
-    let path: String        // working directory
-    var sessions: [SessionSummary]
-}
-
 enum ViewMode: String, Hashable {
     case sessions
     case skills
@@ -17,18 +9,25 @@ enum ViewMode: String, Hashable {
 
 @MainActor
 final class SessionStore: ObservableObject {
-    @Published var groups: [ProjectGroup] = []
+    /// Every scanned session (local + remote mirrors), newest first, already
+    /// enriched with desktop metadata and local title overrides.
+    @Published private(set) var sessions: [SessionSummary] = []
+    /// Desktop app metadata (titles, groups) from the last scan.
+    @Published private(set) var desktop = DesktopSnapshot.empty
+    /// Groups and titles set in this app (persisted).
+    @Published private(set) var localMeta = LocalSessionMeta.load()
     @Published var trashEntries: [TrashEntry] = []
     @Published var viewMode: ViewMode = .sessions
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var searchText = ""
     /// Count of temp/ephemeral sessions excluded from the current scan.
-    @Published var hiddenCount = 0
+    @Published var hiddenTemporaryCount = 0
 
     let remoteHostStore: RemoteHostStore
-    /// One watcher per root: "local" for `rootPath`, plus one keyed by host id
-    /// for each enabled remote host's mirrored cache dir.
+    /// One watcher per root: "local" for `rootPath`, "desktop" for the desktop
+    /// app's session metadata, plus one keyed by host id for each enabled
+    /// remote host's mirrored cache dir.
     private var watchers: [String: DirectoryWatcher] = [:]
 
     init(remoteHosts: RemoteHostStore) {
@@ -40,6 +39,12 @@ final class SessionStore: ObservableObject {
     @AppStorage("showTemporarySessions") var showTemporarySessions = false {
         didSet { Task { await reload() } }
     }
+
+    /// Whether to list sessions archived in the Claude desktop app.
+    @AppStorage("showArchivedSessions") var showArchivedSessions = false
+
+    /// Sidebar layout: by group (desktop + local) or by project.
+    @AppStorage("sessionOrganization") var organization = SessionOrganization.groups
 
     /// Context-window limit used for token-usage display.
     @AppStorage("contextWindowMode") var contextWindowMode = ContextWindowMode.auto
@@ -65,19 +70,34 @@ final class SessionStore: ObservableObject {
 
     var rootURL: URL { URL(fileURLWithPath: rootPath) }
 
-    var totalSessions: Int { groups.reduce(0) { $0 + $1.sessions.count } }
+    // MARK: - Derived views
 
-    /// Groups after applying the search filter.
-    var filteredGroups: [ProjectGroup] {
+    private var archivedHidden: Bool { !showArchivedSessions }
+
+    /// Sessions currently listed: archived ones dropped unless shown, then
+    /// the search filter (which also matches a session's group name).
+    var visibleSessions: [SessionSummary] {
+        let base = archivedHidden ? sessions.filter { !$0.isArchived } : sessions
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return groups }
-        return groups.compactMap { group in
-            let matches = group.sessions.filter { $0.matches(q) }
-            let groupMatch = group.name.lowercased().contains(q) || group.path.lowercased().contains(q)
-            if groupMatch { return group }
-            guard !matches.isEmpty else { return nil }
-            return ProjectGroup(id: group.id, name: group.name, path: group.path, sessions: matches)
+        guard !q.isEmpty else { return base }
+        return base.filter { s in
+            s.matches(q) || (group(of: s.id)?.lowercased().contains(q) ?? false)
         }
+    }
+
+    /// Sidebar sections for the current organization.
+    var sections: [SessionSection] {
+        SessionGrouping.sections(for: visibleSessions, organization: organization,
+                                 local: localMeta, desktop: desktop)
+    }
+
+    /// Sessions not listed: temporary ones (when hidden) + archived ones.
+    var hiddenCount: Int {
+        hiddenTemporaryCount + (archivedHidden ? sessions.filter(\.isArchived).count : 0)
+    }
+
+    func visibleSession(withID id: SessionSummary.ID) -> SessionSummary? {
+        visibleSessions.first { $0.id == id }
     }
 
     /// Trashed entries after applying the search filter.
@@ -87,12 +107,84 @@ final class SessionStore: ObservableObject {
         return trashEntries.filter { $0.summary.matches(q) || $0.originalPath.lowercased().contains(q) }
     }
 
+    // MARK: - Groups
+
+    /// The group a session is filed under (local assignment, else desktop).
+    func group(of id: String) -> String? {
+        SessionGrouping.group(of: id, local: localMeta, desktop: desktop)
+    }
+
+    /// Every known group name, in sidebar order.
+    var allGroups: [String] { SessionGrouping.allGroups(local: localMeta, desktop: desktop) }
+
+    /// Groups that come from Claude Desktop (read-only: renamed/deleted there).
+    func isDesktopGroup(_ name: String) -> Bool { desktop.groupNames.contains(name) }
+
+    /// File sessions under `name` (nil = ungroup). Matching the desktop's own
+    /// assignment just clears the local override, so later desktop changes
+    /// show through again.
+    func assign(_ ids: Set<String>, toGroup name: String?) {
+        var meta = localMeta
+        for id in ids {
+            if name == desktop.groupOfSession[id] {
+                meta.assignments[id] = nil
+            } else {
+                meta.assignments[id] = name ?? ""
+            }
+        }
+        if let name, !isDesktopGroup(name), !meta.groups.contains(name) { meta.groups.append(name) }
+        saveMeta(meta)
+    }
+
+    /// Create a group (or return the existing one with that name, ignoring case).
+    @discardableResult
+    func createGroup(named raw: String) -> String? {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        if let existing = allGroups.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) { return existing }
+        var meta = localMeta
+        meta.groups.append(name)
+        saveMeta(meta)
+        return name
+    }
+
+    /// Rename a group created in this app.
+    func renameGroup(_ old: String, to raw: String) {
+        let new = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !new.isEmpty, new != old, !isDesktopGroup(old) else { return }
+        guard !allGroups.contains(where: { $0 != old && $0.caseInsensitiveCompare(new) == .orderedSame }) else {
+            errorMessage = "A group named “\(new)” already exists."
+            return
+        }
+        var meta = localMeta
+        meta.groups = meta.groups.map { $0 == old ? new : $0 }
+        for (id, g) in meta.assignments where g == old { meta.assignments[id] = new }
+        saveMeta(meta)
+    }
+
+    /// Delete a group created in this app; its sessions become ungrouped
+    /// (or fall back to their desktop group, if any).
+    func deleteGroup(_ name: String) {
+        guard !isDesktopGroup(name) else { return }
+        var meta = localMeta
+        meta.groups.removeAll { $0 == name }
+        meta.assignments = meta.assignments.filter { $0.value != name }
+        saveMeta(meta)
+    }
+
+    private func saveMeta(_ meta: LocalSessionMeta) {
+        localMeta = meta
+        do { try meta.save() } catch { errorMessage = "Couldn't save groups: \(error.localizedDescription)" }
+    }
+
+    // MARK: - Loading
+
     func reload() async {
         isLoading = true
         errorMessage = nil
         switch await scanAll(priority: .userInitiated) {
-        case .success(let r): groups = r.groups; hiddenCount = r.hidden
-        case .failure(let e): errorMessage = e.localizedDescription; groups = []; hiddenCount = 0
+        case .success(let r): apply(r)
+        case .failure(let e): errorMessage = e.localizedDescription; sessions = []; hiddenTemporaryCount = 0
         }
         await loadTrash()
         ensureWatchers()
@@ -102,11 +194,14 @@ final class SessionStore: ObservableObject {
     /// A rescan that doesn't toggle the loading spinner or surface errors
     /// (for background refresh).
     func refreshQuietly() async {
-        if case .success(let r) = await scanAll(priority: .utility) {
-            groups = r.groups
-            hiddenCount = r.hidden
-        }
+        if case .success(let r) = await scanAll(priority: .utility) { apply(r) }
         await loadTrash()
+    }
+
+    private func apply(_ r: ScanResult) {
+        desktop = r.desktop
+        sessions = r.sessions.map { s in localMeta.titles[s.id].map { s.withTitle($0) } ?? s }
+        hiddenTemporaryCount = r.hidden
     }
 
     /// Scan the local root plus every enabled remote mirror off the main
@@ -118,7 +213,8 @@ final class SessionStore: ObservableObject {
         return await Task.detached(priority: priority) {
             defer { SummaryCache.shared.persistIfNeeded() }
             do {
-                let local = try Self.scan(root: root, includeTemp: includeTemp)
+                let desktop = DesktopMetadata.shared.snapshot()
+                let local = try Self.scan(root: root, includeTemp: includeTemp, desktop: desktop)
                 return .success(Self.mergingRemotes(local, remoteRoots: remoteRoots, includeTemp: includeTemp))
             } catch {
                 return .failure(error)
@@ -141,19 +237,15 @@ final class SessionStore: ObservableObject {
         remoteRoots: [(hostID: String, displayName: String, cacheDir: URL)],
         includeTemp: Bool
     ) -> ScanResult {
-        var groups = local.groups
+        var sessions = local.sessions
         var hidden = local.hidden
         for r in remoteRoots {
             guard let remote = try? Self.scan(root: r.cacheDir, includeTemp: includeTemp) else { continue }
-            let tagged = remote.groups.map { group -> ProjectGroup in
-                ProjectGroup(id: "\(r.hostID):\(group.id)", name: group.name, path: group.path,
-                             sessions: group.sessions.map { $0.withRemote(hostID: r.hostID, displayName: r.displayName) })
-            }
-            groups += tagged
+            sessions += remote.sessions.map { $0.withRemote(hostID: r.hostID, displayName: r.displayName) }
             hidden += remote.hidden
         }
-        groups.sort { ($0.sessions.first?.sortDate ?? .distantPast) > ($1.sessions.first?.sortDate ?? .distantPast) }
-        return ScanResult(groups: groups, hidden: hidden)
+        sessions.sort { $0.sortDate > $1.sortDate }
+        return ScanResult(sessions: sessions, hidden: hidden, desktop: local.desktop)
     }
 
     /// Watch every root (local + each enabled remote host's mirrored cache)
@@ -162,6 +254,10 @@ final class SessionStore: ObservableObject {
     private func ensureWatchers() {
         var wanted: [String: String] = ["local": rootPath]
         for r in enabledRemoteRoots() { wanted[r.hostID] = r.cacheDir.path }
+        // Desktop titles / archive state change there; only watch if it exists
+        // (never create folders inside another app's support directory).
+        let desktopDir = DesktopMetadata.shared.sessionsDir.path
+        if FileManager.default.fileExists(atPath: desktopDir) { wanted["desktop"] = desktopDir }
 
         for key in watchers.keys where wanted[key] == nil {
             watchers[key] = nil
@@ -170,7 +266,9 @@ final class SessionStore: ObservableObject {
             // FSEvents needs the directory to exist before it can watch it —
             // a remote host's cache dir may not exist yet on its first launch,
             // ahead of that host's first sync.
-            try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            if key != "desktop" {
+                try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            }
             watchers[key] = DirectoryWatcher(path: path) { [weak self] in
                 Task { await self?.refreshQuietly() }
             }
@@ -184,11 +282,15 @@ final class SessionStore: ObservableObject {
     // MARK: - Scanning (runs off the main actor)
 
     struct ScanResult: Sendable {
-        let groups: [ProjectGroup]
+        /// Newest first.
+        let sessions: [SessionSummary]
         let hidden: Int
+        var desktop = DesktopSnapshot.empty
     }
 
-    nonisolated static func scan(root: URL, includeTemp: Bool,
+    /// Parse every `.jsonl` under `root` (newest first), enriched with
+    /// `desktop` metadata. Temporary sessions are dropped unless `includeTemp`.
+    nonisolated static func scan(root: URL, includeTemp: Bool, desktop: DesktopSnapshot = .empty,
                                  cache: SummaryCache = .shared) throws -> ScanResult {
         let fm = FileManager.default
         var isDir: ObjCBool = false
@@ -205,7 +307,7 @@ final class SessionStore: ObservableObject {
             for case let url as URL in en where url.pathExtension == "jsonl" {
                 // Skip subagent transcripts (<project>/<session-id>/subagents/
                 // agent-*.jsonl): they belong to a parent session and would
-                // otherwise show up as a duplicate project group of their own.
+                // otherwise show up as a duplicate session of their own.
                 guard !url.pathComponents.contains("subagents") else { continue }
                 let vals = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                 files.append((url,
@@ -215,27 +317,10 @@ final class SessionStore: ObservableObject {
         }
 
         // Parse (cached by mtime+size), then drop throwaway temp-dir sessions.
-        let parsed = parseConcurrently(files, cache: cache)
-        let summaries = includeTemp ? parsed : parsed.filter { !$0.isEphemeral }
-        let hidden = parsed.count - summaries.count
-
-        var byFolder: [String: [SessionSummary]] = [:]
-        for s in summaries { byFolder[s.projectFolder, default: []].append(s) }
-
-        var groups: [ProjectGroup] = byFolder.map { folder, sessions in
-            // Latest conversation first within each project.
-            let sorted = sessions.sorted { $0.sortDate > $1.sortDate }
-            let sample = sorted.first
-            return ProjectGroup(
-                id: folder,
-                name: sample?.projectName ?? SessionSummary.decodeFolder(folder),
-                path: sample?.workingDirectory ?? SessionSummary.decodeFolder(folder),
-                sessions: sorted
-            )
-        }
-        // Most-recently-active projects first.
-        groups.sort { ($0.sessions.first?.sortDate ?? .distantPast) > ($1.sessions.first?.sortDate ?? .distantPast) }
-        return ScanResult(groups: groups, hidden: hidden)
+        let parsed = parseConcurrently(files, cache: cache).map { $0.enriched(with: desktop.sessions[$0.id]) }
+        let kept = includeTemp ? parsed : parsed.filter { !$0.isEphemeral }
+        return ScanResult(sessions: kept.sorted { $0.sortDate > $1.sortDate },
+                          hidden: parsed.count - kept.count, desktop: desktop)
     }
 
     /// Parse (or fetch from cache) every file, spread across cores — a cold
@@ -258,6 +343,11 @@ final class SessionStore: ObservableObject {
         Task {
             do {
                 try await SessionActions.rename(session, to: title, remoteHostStore: remoteHostStore)
+                // Also keep it locally: for a desktop session the desktop's
+                // title would otherwise win over the appended ai-title.
+                var meta = localMeta
+                meta.titles[session.id] = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                saveMeta(meta)
                 updateSession(session.id) { $0 = $0.withTitle(title) }
             } catch {
                 errorMessage = error.localizedDescription
@@ -280,7 +370,7 @@ final class SessionStore: ObservableObject {
 
     /// Move several sessions to the trash at once.
     func deleteMany(_ ids: Set<String>) {
-        let targets = groups.flatMap { $0.sessions }.filter { ids.contains($0.id) }
+        let targets = sessions.filter { ids.contains($0.id) }
         Task {
             var trashed: Set<String> = []
             var failures: [String] = []
@@ -365,21 +455,12 @@ final class SessionStore: ObservableObject {
 
     private func removeSessions(_ ids: Set<String>) {
         guard !ids.isEmpty else { return }
-        for i in groups.indices {
-            groups[i].sessions.removeAll { ids.contains($0.id) }
-        }
-        groups.removeAll { $0.sessions.isEmpty }
+        sessions.removeAll { ids.contains($0.id) }
     }
 
     private func updateSession(_ id: String, _ mutate: (inout SessionSummary) -> Void) {
-        for gi in groups.indices {
-            if let si = groups[gi].sessions.firstIndex(where: { $0.id == id }) {
-                var s = groups[gi].sessions[si]
-                mutate(&s)
-                groups[gi].sessions[si] = s
-                return
-            }
-        }
+        guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&sessions[i])
     }
 }
 

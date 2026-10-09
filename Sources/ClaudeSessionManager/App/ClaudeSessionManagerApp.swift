@@ -21,6 +21,10 @@ struct ClaudeSessionManagerApp: App {
                 .environmentObject(remoteHosts)
                 .frame(minWidth: 960, minHeight: 600)
                 .task { await store.reload() }
+                // Groups / titles may have changed in Claude Desktop meanwhile.
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    Task { await store.refreshQuietly() }
+                }
                 .onAppear {
                     skills.start()
                     SelfSnapshot.runIfRequested()

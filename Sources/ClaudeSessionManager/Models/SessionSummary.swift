@@ -44,6 +44,15 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
     var remoteHostID: String? = nil
     var remoteDisplayName: String? = nil
 
+    /// Folder the session is grouped under: for a worktree session the parent
+    /// repository (so all of a repo's worktrees share one project), else nil
+    /// (meaning `workingDirectory`). Set by `enriched(with:)`.
+    var projectRoot: String? = nil
+    /// Worktree name when the session ran in a git worktree.
+    var worktreeName: String? = nil
+    /// Archived in the Claude desktop app.
+    var isArchived = false
+
     /// True when the session contains at least one real conversation turn.
     var hasConversation: Bool { messageCount > 0 }
 
@@ -63,11 +72,17 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
         }
     }
 
-    /// A readable project name derived from the cwd (last path component).
+    /// A readable project name: last path component of the grouping folder.
     var projectName: String {
-        let path = cwd.isEmpty ? Self.decodeFolder(projectFolder) : cwd
-        return (path as NSString).lastPathComponent
+        isScratch ? "Scratch" : (groupingRoot as NSString).lastPathComponent
     }
+
+    /// The folder this session is grouped under (see `projectRoot`).
+    var groupingRoot: String { projectRoot ?? workingDirectory }
+
+    /// A desktop-app session started without a project folder: it runs in a
+    /// throwaway `…/Claude/scratch-workspaces/…/scratch-<date>-<id>` folder.
+    var isScratch: Bool { workingDirectory.contains("/Claude/scratch-workspaces/") }
 
     /// Full working directory for display / launching.
     var workingDirectory: String {
@@ -102,6 +117,32 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
             messageCount: 0, models: [], totalOutputTokens: 0,
             createdAt: nil, lastActivityAt: nil, modifiedAt: Date(), fileSize: 0,
             latestContextTokens: 0, maxContextTokens: 0)
+    }
+
+    /// A copy completed with what the desktop app knows (its title, the
+    /// worktree's parent repo, archived state), and with worktree sessions
+    /// grouped under their repository even when the desktop has no record.
+    func enriched(with desktop: DesktopSessionInfo?) -> SessionSummary {
+        var copy = self
+        if let desktop {
+            if let t = desktop.title { copy.title = t }
+            copy.projectRoot = desktop.originCwd
+            copy.worktreeName = desktop.worktreeName
+            copy.isArchived = desktop.isArchived
+        }
+        if copy.projectRoot == nil, let wt = Self.worktreeParent(of: workingDirectory) {
+            copy.projectRoot = wt.root
+            copy.worktreeName = copy.worktreeName ?? wt.name
+        }
+        return copy
+    }
+
+    /// `/repo/.claude/worktrees/<name>[/…]` → (`/repo`, `<name>`).
+    static func worktreeParent(of path: String) -> (root: String, name: String)? {
+        guard let r = path.range(of: "/.claude/worktrees/") else { return nil }
+        let name = path[r.upperBound...].split(separator: "/").first.map(String.init) ?? ""
+        let root = String(path[..<r.lowerBound])
+        return root.isEmpty || name.isEmpty ? nil : (root, name)
     }
 
     /// A copy with a new title (used after rename / when restoring a stored title).

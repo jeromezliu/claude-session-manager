@@ -44,6 +44,9 @@ struct SessionRow: View {
                     if let host = session.remoteDisplayName {
                         Label(host, systemImage: "network").lineLimit(1)
                     }
+                    if session.isArchived {
+                        Image(systemName: "archivebox").help("Archived in Claude Desktop")
+                    }
                     Spacer()
                     Text(Fmt.relative(session.modifiedAt))
                 }

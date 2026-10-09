@@ -9,6 +9,8 @@ extension ContentView {
         if ids.count > 1 {
             // The List selection is already updated to `ids` before this builds,
             // so the confirm alert acts on the full selection.
+            groupMenu(for: ids)
+            Divider()
             Button("Move \(ids.count) to Trash", role: .destructive) {
                 confirmDeleteSelection = true
             }
@@ -16,11 +18,33 @@ extension ContentView {
             Button("Continue in Terminal") { store.continueSession(session) }
             Button("Open in Terminal.app") { store.openInExternalTerminal(session) }
             Button("Rename…") { renameTarget = session }
+            groupMenu(for: ids)
             Divider()
             Button("Reveal in Finder") { SessionActions.revealInFinder(session) }
             Button("Copy Session ID") { SessionActions.copySessionID(session) }
             Divider()
             Button("Move to Trash", role: .destructive) { deleteTarget = session }
+        }
+    }
+
+    /// "Move to Group" submenu for one or more sessions.
+    private func groupMenu(for ids: Set<SessionSummary.ID>) -> some View {
+        let current = ids.count == 1 ? ids.first.flatMap { store.group(of: $0) } : nil
+        let anyGrouped = ids.contains { store.group(of: $0) != nil }
+        return Menu(ids.count > 1 ? "Move \(ids.count) to Group" : "Move to Group") {
+            ForEach(store.allGroups, id: \.self) { name in
+                Button {
+                    store.assign(ids, toGroup: name)
+                } label: {
+                    if name == current { Label(name, systemImage: "checkmark") } else { Text(name) }
+                }
+            }
+            if !store.allGroups.isEmpty { Divider() }
+            Button("New Group…") { groupSheet = .create(ids) }
+            if anyGrouped {
+                Divider()
+                Button("Remove from Group") { store.assign(ids, toGroup: nil) }
+            }
         }
     }
 
@@ -112,7 +136,11 @@ extension ContentView {
                 }
             }
             Menu {
+                Picker("Organize Sessions", selection: $store.organization) {
+                    ForEach(SessionOrganization.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
                 Toggle("Show temporary sessions", isOn: $store.showTemporarySessions)
+                Toggle("Show archived sessions", isOn: $store.showArchivedSessions)
                 Picker("Context window", selection: $store.contextWindowMode) {
                     ForEach(ContextWindowMode.allCases, id: \.self) { Text($0.label).tag($0) }
                 }

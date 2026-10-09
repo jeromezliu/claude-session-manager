@@ -14,9 +14,13 @@ enum Fmt {
         return f
     }()
 
-    static func relative(_ date: Date?) -> String {
+    static func relative(_ date: Date?, now: Date = Date()) -> String {
         guard let date else { return "—" }
-        return relative.localizedString(for: date, relativeTo: Date())
+        // A file being written right now can carry an mtime at or a hair
+        // ahead of `now`, which the formatter renders as "in 0 sec." (and a
+        // skewed clock as "in 5 min."). Anything that recent is just "now".
+        if date.timeIntervalSince(now) > -60 { return "now" }
+        return relative.localizedString(for: date, relativeTo: now)
     }
 
     static func full(_ date: Date?) -> String {

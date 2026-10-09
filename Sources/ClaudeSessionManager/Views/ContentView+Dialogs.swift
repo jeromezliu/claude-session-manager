@@ -4,6 +4,22 @@ extension ContentView {
     /// Every sheet and alert the main window can present.
     func withDialogs<Content: View>(_ content: Content) -> some View {
         content
+        .sheet(item: $groupSheet) { request in
+            switch request {
+            case .create(let ids):
+                NameSheet(title: "New Group",
+                          message: ids.isEmpty ? nil : "The \(ids.count == 1 ? "session" : "\(ids.count) sessions") will be moved into it.",
+                          placeholder: "Group name", actionTitle: "Create") { name in
+                    if let created = store.createGroup(named: name), !ids.isEmpty {
+                        store.assign(ids, toGroup: created)
+                    }
+                }
+            case .rename(let old):
+                NameSheet(title: "Rename Group", placeholder: "Group name", initial: old) { name in
+                    store.renameGroup(old, to: name)
+                }
+            }
+        }
         .sheet(item: $renameTarget) { target in
             RenameSheet(session: target) { newTitle in
                 store.rename(target, to: newTitle)
