@@ -24,13 +24,8 @@ struct TLSIdentity {
         SHA256.hash(data: der).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// "482 913" — derived from the fingerprint, so a client that saw a
-    /// different certificate (a man in the middle) shows a different code.
     static func securityCode(forFingerprint fp: String) -> String {
-        let digest = SHA256.hash(data: Data(("csm-pairing:" + fp.lowercased()).utf8))
-        let n = digest.prefix(4).reduce(0) { ($0 << 8) | UInt32($1) } % 1_000_000
-        let s = String(format: "%06u", n)
-        return s.prefix(3) + " " + s.suffix(3)
+        PairingSecurity.code(forFingerprint: fp)
     }
 
     enum TLSError: LocalizedError {

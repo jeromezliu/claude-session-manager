@@ -24,7 +24,7 @@ struct RemoteSessionInfo: Codable, Equatable, Sendable {
     var lastPrompt: String?
     var isRemoteHost: Bool
     /// The app is driving it; `phase` says what it's doing.
-    var hostedPhase: HostedSession.Phase?
+    var hostedPhase: SessionPhase?
     /// Open in a terminal / Claude Desktop — read-only for remote clients.
     var busyElsewhere: String?
 }
@@ -32,7 +32,7 @@ struct RemoteSessionInfo: Codable, Equatable, Sendable {
 /// Live state of a hosted session, sent when a client can't be caught up
 /// from the event log (first subscribe, or its `afterSeq` was trimmed).
 struct LiveSnapshot: Codable, Equatable, Sendable {
-    var phase: HostedSession.Phase
+    var phase: SessionPhase
     var liveText: String
     var pending: [PendingRequest]
     var queued: [String]

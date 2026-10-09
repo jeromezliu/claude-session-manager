@@ -26,28 +26,8 @@ enum StreamMessage: Equatable {
     case result(TurnResult)
     case other
 
-    /// What `can_use_tool` carries.
-    struct PermissionAsk: Equatable, Codable, Sendable {
-        var toolName: String
-        var displayName: String?
-        var input: JSONValue
-        var description: String?
-        var toolUseID: String?
-        /// Rules the CLI proposes for "always allow" (sent back as-is).
-        var suggestions: JSONValue?
-        var blockedPath: String?
-        /// Set for AskUserQuestion / ExitPlanMode.
-        var requiresUserInteraction: Bool
-    }
-
-    struct TurnResult: Equatable, Codable, Sendable {
-        var subtype: String
-        var isError: Bool
-        var text: String?
-        var costUSD: Double?
-        var sessionID: String?
-        var deniedTools: Int
-    }
+    typealias PermissionAsk = ClaudeSessionManager.PermissionAsk
+    typealias TurnResult = ClaudeSessionManager.TurnResult
 
     static func decode(_ obj: [String: Any]) -> StreamMessage {
         let type = obj["type"] as? String

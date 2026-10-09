@@ -1,92 +1,12 @@
 import Foundation
 
-/// Something waiting for the user: a tool approval, an AskUserQuestion, or
-/// an ExitPlanMode plan review.
-struct PendingRequest: Identifiable, Equatable, Codable, Sendable {
-    enum Kind: String, Codable, Sendable { case permission, question, plan }
-
-    /// The CLI's `request_id` — what the answer must echo.
-    let id: String
-    let kind: Kind
-    let ask: StreamMessage.PermissionAsk
-    let createdAt: Date
-
-    init(id: String, ask: StreamMessage.PermissionAsk, createdAt: Date = Date()) {
-        self.id = id
-        self.ask = ask
-        self.createdAt = createdAt
-        switch ask.toolName {
-        case "AskUserQuestion": kind = .question
-        case "ExitPlanMode": kind = .plan
-        default: kind = .permission
-        }
-    }
-}
-
-/// How the user answered a pending request.
-enum RequestDecision: Equatable {
-    /// Run it. `always` also sends the CLI's own suggested "always allow" rules.
-    case allow(always: Bool)
-    /// Don't; Claude sees `message`.
-    case deny(message: String)
-    /// AskUserQuestion: question text → chosen option label(s).
-    case answer([String: String])
-    /// ExitPlanMode: go ahead with the plan.
-    case approvePlan
-}
-
-/// One event in a hosted session's log. Clients replay from the last `seq`
-/// they saw, so a phone that drops off the network catches up exactly.
-struct HostEvent: Codable, Equatable, Sendable {
-    enum Kind: Codable, Equatable, Sendable {
-        case phase(HostedSession.Phase)
-        case textDelta(String)
-        /// The streamed reply was committed (now in the transcript file).
-        case replyCommitted
-        case requestAdded(PendingRequest)
-        case requestResolved(id: String, outcome: String)
-        case queueChanged([String])
-        case permissionMode(String)
-        case turnFinished(StreamMessage.TurnResult)
-        case rateLimit(status: String?, resetsAt: Date?)
-    }
-    let seq: Int
-    let at: Date
-    let kind: Kind
-}
-
-/// A bounded, sequenced event log.
-struct EventLog: Sendable {
-    private(set) var events: [HostEvent] = []
-    private(set) var lastSeq = 0
-    let capacity: Int
-
-    init(capacity: Int = 5000) { self.capacity = capacity }
-
-    mutating func append(_ kind: HostEvent.Kind, at date: Date = Date()) {
-        lastSeq += 1
-        events.append(HostEvent(seq: lastSeq, at: date, kind: kind))
-        if events.count > capacity { events.removeFirst(events.count - capacity) }
-    }
-
-    /// Events after `seq`, or nil when they've been trimmed (the client must
-    /// take a full snapshot instead).
-    func events(after seq: Int) -> [HostEvent]? {
-        guard seq < lastSeq else { return [] }
-        guard let first = events.first, first.seq <= seq + 1 else { return nil }
-        return events.filter { $0.seq > seq }
-    }
-}
-
 /// A Claude Code session the app itself runs headless (`claude -p`
 /// stream-json), so the Mac UI and remote clients can watch it, talk to it
 /// and answer its approvals. One owner per session: everything that reaches
 /// the CLI goes through here.
 @MainActor
 final class HostedSession: ObservableObject, Identifiable {
-    enum Phase: String, Codable, Sendable, Equatable {
-        case starting, idle, running, waiting, exited
-    }
+    typealias Phase = SessionPhase
 
     /// Host-minted id, stable from the start (the CLI's id arrives later).
     let id = UUID()
@@ -101,7 +21,7 @@ final class HostedSession: ObservableObject, Identifiable {
     @Published private(set) var queued: [String] = []
     @Published private(set) var permissionMode: String
     @Published private(set) var claudeVersion: String?
-    @Published private(set) var lastResult: StreamMessage.TurnResult?
+    @Published private(set) var lastResult: TurnResult?
     @Published private(set) var exitReason: String?
     @Published private(set) var log = EventLog()
 
