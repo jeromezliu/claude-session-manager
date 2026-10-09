@@ -32,6 +32,7 @@ struct ContentView: View {
     @State var terminalMaximized = false
     @State var showRemoteHosts = false
     @State var showNewChat = false
+    @State var showRemoteAccess = false
     /// A new headless chat whose transcript isn't listed yet.
     @State var startingChat: HostedSession?
     @EnvironmentObject var host: SessionHost

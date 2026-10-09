@@ -4,6 +4,9 @@ extension ContentView {
     /// Every sheet and alert the main window can present.
     func withDialogs<Content: View>(_ content: Content) -> some View {
         content
+        .sheet(isPresented: $showRemoteAccess) {
+            RemoteAccessSheet()
+        }
         .sheet(isPresented: $showNewChat) {
             NewChatSheet(defaultFolder: store.newSessionDir) { folder, prompt, mode in
                 do {

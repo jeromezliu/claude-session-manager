@@ -1,14 +1,14 @@
 import Foundation
 
 /// A single renderable event parsed from one JSONL line of a session file.
-struct TranscriptEvent: Identifiable, Hashable, Sendable {
+struct TranscriptEvent: Identifiable, Hashable, Sendable, Codable {
     let id: Int          // line index — stable within a parse
     let kind: Kind
     let timestamp: Date?
     let model: String?
     let blocks: [Block]
 
-    enum Kind: String, Sendable {
+    enum Kind: String, Sendable, Codable {
         case user
         case assistant
         case system
@@ -27,7 +27,7 @@ struct TranscriptEvent: Identifiable, Hashable, Sendable {
     }
 
     /// A content block inside an event.
-    enum Block: Hashable, Sendable {
+    enum Block: Hashable, Sendable, Codable {
         case text(String)
         case thinking(String)
         case toolUse(name: String, input: String)

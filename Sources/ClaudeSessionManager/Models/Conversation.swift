@@ -2,7 +2,7 @@ import Foundation
 
 /// A transcript reshaped for reading: what you asked, what Claude answered,
 /// and the tool work in between folded into one line per stretch.
-enum ConversationItem: Identifiable, Hashable {
+enum ConversationItem: Identifiable, Hashable, Codable, Sendable {
     /// Something the user typed.
     case prompt(id: Int, date: Date?, text: String)
     /// Claude's prose answer (text blocks of one assistant event).
@@ -12,7 +12,7 @@ enum ConversationItem: Identifiable, Hashable {
     /// Attachments, system events and harness turns — shown only on request.
     case note(id: Int, date: Date?, text: String)
 
-    struct Activity: Hashable {
+    struct Activity: Hashable, Codable, Sendable {
         let id: Int
         /// Every non-prose block of the stretch, in order (for expanding).
         var blocks: [TranscriptEvent.Block]

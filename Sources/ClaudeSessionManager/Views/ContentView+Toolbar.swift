@@ -158,6 +158,7 @@ extension ContentView {
                 }
                 Divider()
                 Button("Manage Remote Hosts…") { showRemoteHosts = true }
+                Button("Remote Access…") { showRemoteAccess = true }
                 Divider()
                 Button("Version \(AppInfo.version)") {}.disabled(true)
             } label: {
