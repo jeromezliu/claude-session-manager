@@ -20,7 +20,8 @@ let package = Package(
         .testTarget(
             name: "ClaudeSessionManagerTests",
             dependencies: ["ClaudeSessionManager"],
-            path: "Tests/ClaudeSessionManagerTests"
+            path: "Tests/ClaudeSessionManagerTests",
+            resources: [.copy("Fixtures")]
         )
     ]
 )

@@ -41,6 +41,18 @@ final class DetailTests: XCTestCase {
         XCTAssertEqual(items.map(\.id), ["n0", "p1"])
     }
 
+    func testInterruptMarkerIsANoteNotAPrompt() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("csm-x-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("s.jsonl")
+        try [#"{"type":"user","message":{"content":"real question"}}"#,
+             #"{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#]
+            .joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(ConversationBuilder.items(from: SessionParser.transcript(for: url)).map(\.id), ["p0", "n1"])
+        XCTAssertEqual(SessionParser.summary(for: url)?.lastPrompt, "real question")
+    }
+
     // MARK: - Insights
 
     func testInsightsCollectOutputs() throws {

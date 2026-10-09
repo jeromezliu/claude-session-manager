@@ -29,8 +29,14 @@ enum PromptText {
     private static let commandName = try! NSRegularExpression(pattern: "<command-name>([\\s\\S]*?)</command-name>\\s*")
     private static let commandArgs = try! NSRegularExpression(pattern: "<command-args>([\\s\\S]*?)</command-args>\\s*")
 
+    /// What Claude Code records as a "user" turn when a turn is interrupted.
+    static func isInterruptMarker(_ raw: String) -> Bool {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("[Request interrupted by user")
+    }
+
     /// The user-visible text of `raw`, or nil if nothing is left.
     static func clean(_ raw: String) -> String? {
+        if isInterruptMarker(raw) { return nil }
         guard raw.contains("<") else {
             let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             return t.isEmpty ? nil : t

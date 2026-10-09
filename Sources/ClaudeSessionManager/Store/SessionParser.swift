@@ -325,6 +325,9 @@ enum SessionParser {
         switch type {
         case "user":
             let msg = obj["message"] as? [String: Any]
+            if Self.isInterruptMarker(msg?["content"]) {
+                return .init(id: index, kind: .meta, timestamp: ts, model: nil, blocks: [.note("Interrupted")])
+            }
             let blocks = contentBlocks(from: msg?["content"], toolResult: obj["toolUseResult"], cleanText: true)
             // isMeta turns are harness-generated, not something the user typed.
             let kind: TranscriptEvent.Kind = (obj["isMeta"] as? Bool) == true ? .meta : .user
@@ -347,6 +350,13 @@ enum SessionParser {
     }
 
     // MARK: - Content helpers
+
+    /// A user turn that only records an interruption.
+    private static func isInterruptMarker(_ content: Any?) -> Bool {
+        if let s = content as? String { return PromptText.isInterruptMarker(s) }
+        guard let arr = content as? [[String: Any]], !arr.isEmpty else { return false }
+        return arr.allSatisfy { ($0["text"] as? String).map(PromptText.isInterruptMarker) ?? false }
+    }
 
     /// First text the user actually typed in a message content (String or
     /// block array), with harness-injected tags removed (see `PromptText`).
