@@ -68,4 +68,30 @@ extension ContentView {
             }
         }
     }
+
+    /// Dev-only: start a headless chat (CSM_CHAT_DIR, CSM_CHAT_PROMPT,
+    /// CSM_CHAT_MODEL) and snapshot once it asks for approval (or after 60s).
+    func maybeChatSnapshot() {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["CSM_CHAT_SNAP"], !path.isEmpty, let dir = env["CSM_CHAT_DIR"] else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            let chat: HostedSession
+            do {
+                chat = try host.startNew(in: dir, prompt: env["CSM_CHAT_PROMPT"] ?? "Say hi", model: env["CSM_CHAT_MODEL"])
+            } catch {
+                FileHandle.standardError.write(Data("CSM chat snapshot: couldn't start: \(error.localizedDescription)\n".utf8))
+                return
+            }
+            FileHandle.standardError.write(Data("CSM chat snapshot: started in \(dir)\n".utf8))
+            startingChat = chat
+            Task { @MainActor in
+                for _ in 0..<120 where chat.pending.isEmpty {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                SelfSnapshot.captureKeyWindow(to: URL(fileURLWithPath: path))
+                if env["CSM_SNAPSHOT_QUIT"] == "1" { host.stopAll(); NSApp.terminate(nil) }
+            }
+        }
+    }
 }

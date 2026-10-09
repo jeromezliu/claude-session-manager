@@ -14,6 +14,10 @@ struct TranscriptView: View {
     var onContinue: () -> Void = {}
     var onRecover: () -> Void = {}
     var onPurge: () -> Void = {}
+    /// Off where another input owns the session (the embedded terminal split).
+    var showsComposer = true
+
+    @EnvironmentObject private var host: SessionHost
 
     @State private var events: [TranscriptEvent] = []
     @State private var items: [ConversationItem] = []
@@ -45,7 +49,14 @@ struct TranscriptView: View {
                         tab = .conversation
                     }
                 case .conversation:
-                    ConversationView(items: items, showNotes: showNotes, jumpTarget: $jumpTarget)
+                    ConversationView(items: items, showNotes: showNotes, jumpTarget: $jumpTarget,
+                                     live: host.hosted(session.id))
+                }
+            }
+            if mode == .active && showsComposer {
+                SessionComposer(session: session) {
+                    jumpTarget = nil
+                    tab = .conversation
                 }
             }
         }
@@ -586,6 +597,9 @@ private struct ConversationView: View {
     let items: [ConversationItem]
     let showNotes: Bool
     @Binding var jumpTarget: String?
+    /// The hosted session, if the app is driving this one — its reply streams
+    /// in below the transcript until it's written to the file.
+    var live: HostedSession?
 
     private var shown: [ConversationItem] {
         showNotes ? items : items.filter { if case .note = $0 { return false } else { return true } }
@@ -598,6 +612,8 @@ private struct ConversationView: View {
                     ForEach(shown) { item in
                         ConversationItemView(item: item).id(item.id)
                     }
+                    if let live { LiveReplyView(hosted: live) }
+                    Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 18)
@@ -612,6 +628,8 @@ private struct ConversationView: View {
             }
             .onAppear { scroll(proxy) }
             .onChange(of: jumpTarget) { _ in scroll(proxy) }
+            // Follow a session the app is driving as new turns land.
+            .onChange(of: items.count) { _ in if live != nil { proxy.scrollTo("bottom", anchor: .bottom) } }
         }
     }
 

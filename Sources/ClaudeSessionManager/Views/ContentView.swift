@@ -31,6 +31,10 @@ struct ContentView: View {
     /// Whether the embedded terminal fills the whole detail (hides transcript).
     @State var terminalMaximized = false
     @State var showRemoteHosts = false
+    @State var showNewChat = false
+    /// A new headless chat whose transcript isn't listed yet.
+    @State var startingChat: HostedSession?
+    @EnvironmentObject var host: SessionHost
     @State var remoteNewSessionHost: RemoteHost?
 
     private var mainScene: some View {
@@ -48,6 +52,9 @@ struct ContentView: View {
         .searchable(text: $store.searchText, placement: .toolbar, prompt: searchPrompt)
         .toolbar { toolbarContent }
         .onChange(of: sidebarSelection) { sel in syncViewMode(to: sel) }
+        // A new chat's file appeared: show it as a regular session.
+        .onChange(of: host.recentlyStarted) { _ in adoptStartedChat() }
+        .onChange(of: store.sessions.count) { _ in adoptStartedChat() }
         .onChange(of: store.viewMode) { mode in syncSidebar(to: mode) }
         .onChange(of: store.sessions.count) { _ in autoSelectForSnapshot() }
         .onChange(of: selectedSessions) { _ in terminalMaximized = false }
@@ -60,7 +67,18 @@ struct ContentView: View {
             // the detail keeps showing the (still-running) terminal.
             if let newID, activeNewTerminal != nil { activeNewTerminal = newID }
         }
-        .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot(); maybeSkillsSnapshot() }
+        .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot(); maybeSkillsSnapshot(); maybeChatSnapshot() }
+    }
+
+    private func adoptStartedChat() {
+        guard let chat = startingChat, let id = chat.sessionID else { return }
+        if store.visibleSession(withID: id) != nil {
+            startingChat = nil
+            sidebarSelection = .allSessions
+            selectedSessions = [id]
+        } else {
+            Task { await store.refreshQuietly() }
+        }
     }
 
     private var searchPrompt: String {
@@ -132,6 +150,8 @@ struct ContentView: View {
                     TranscriptView(session: session, mode: .active,
                                    onContinue: { store.continueSession(session) })
                 }
+            } else if let chat = startingChat {
+                StartingChatView(hosted: chat)
             } else if let id = activeNewTerminal,
                       let terminal = terminals.session(for: id),
                       !terminal.isPoppedOut {
@@ -185,7 +205,7 @@ struct ContentView: View {
     private func terminalSplit(summary: SessionSummary, terminal: TerminalSession) -> some View {
         VSplitView {
             TranscriptView(session: summary, mode: .active,
-                           onContinue: { store.continueSession(summary) })
+                           onContinue: { store.continueSession(summary) }, showsComposer: false)
                 .frame(minHeight: terminalMaximized ? 0 : 180,
                        maxHeight: terminalMaximized ? 0 : .infinity)
                 .opacity(terminalMaximized ? 0 : 1)

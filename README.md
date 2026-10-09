@@ -110,6 +110,14 @@ cd claude-session-manager
   "Open in Terminal.app" is also available from the context menu.
 - **New session** — start a fresh `claude` session in any folder right from the
   app (➕ toolbar button, with a remembered default directory).
+- **Chat with a session in the app** — type in the composer under any session:
+  the app resumes it headless (`claude -p` stream-json) and streams the reply
+  in. Tool approvals, `AskUserQuestion` and plan reviews appear as cards (Allow /
+  Always Allow / Deny with a reason; pick an answer; approve or keep planning);
+  Stop interrupts the turn and the mode picker switches permission mode live.
+  Messages typed while an approval is open wait for it. Sessions open elsewhere
+  (a terminal, Claude Desktop, the embedded terminal) stay read-only here.
+  *New Chat (no terminal)…* in the ➕ menu starts one from scratch.
 - **Activity indicator** — a pulsing dot marks sessions whose terminal is
   actively producing output.
 - **App-managed Trash** — deleting moves the `.jsonl` to an in-app trash

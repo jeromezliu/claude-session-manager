@@ -11,6 +11,7 @@ final class HostedSessionTests: XCTestCase {
         var onExit: ((Int32, String) -> Void)?
         var sent: [[String: Any]] = []
         var started = false, terminated = false
+        var pid: Int32? { nil }
         func start() throws { started = true }
         func send(_ object: [String: Any]) { sent.append(object) }
         func terminate() { terminated = true; onExit?(0, "") }
@@ -213,5 +214,61 @@ final class HostedSessionTests: XCTestCase {
         XCTAssertEqual(back["a"] as? Int, 1)
         XCTAssertEqual(back["b"] as? Bool, true)
         XCTAssertEqual(JSONValue(any: back), v)
+    }
+
+    // MARK: - SessionHost
+
+    private func summary(_ id: String) -> SessionSummary {
+        SessionSummary(id: id, fileURL: URL(fileURLWithPath: "/tmp/\(id).jsonl"), projectFolder: "-tmp", cwd: "/tmp",
+                       gitBranch: nil, claudeVersion: nil, title: "t", firstPrompt: nil, lastPrompt: nil,
+                       messageCount: 1, models: [], totalOutputTokens: 0, createdAt: nil, lastActivityAt: nil,
+                       modifiedAt: Date(), fileSize: 0, latestContextTokens: 0, maxContextTokens: 0)
+    }
+
+    private func hostWithPidFiles(_ files: [String: [String: Any]]) throws -> (SessionHost, [FakeTransport]) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("csm-pids-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        for (name, obj) in files {
+            try JSONSerialization.data(withJSONObject: obj).write(to: dir.appendingPathComponent(name))
+        }
+        let host = SessionHost()
+        host.sessionsDir = dir
+        var made: [FakeTransport] = []
+        host.makeTransport = { _ in let t = FakeTransport(); made.append(t); return t }
+        return (host, made)
+    }
+
+    func testResumeRefusesASessionRunningElsewhere() throws {
+        let me = ProcessInfo.processInfo.processIdentifier   // a live pid
+        let (host, _) = try hostWithPidFiles([
+            "1.json": ["pid": me, "sessionId": "busy", "entrypoint": "claude-desktop", "status": "idle"],
+            "2.json": ["pid": 999_999, "sessionId": "stale", "entrypoint": "cli"],   // dead process
+        ])
+        XCTAssertThrowsError(try host.resume(summary("busy"))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Claude Desktop"))
+        }
+        XCTAssertNil(host.blocker(for: "stale"), "a pid file of a dead process doesn't block")
+        XCTAssertNoThrow(try host.resume(summary("stale")))
+    }
+
+    func testResumeReusesTheLiveHostedSession() throws {
+        let (host, _) = try hostWithPidFiles([:])
+        let a = try host.resume(summary("s1"))
+        let b = try host.resume(summary("s1"))
+        XCTAssertTrue(a === b)
+        XCTAssertTrue(host.hosted("s1") === a)
+    }
+
+    func testNewSessionIsRekeyedOnceClaudeAnnouncesItsID() throws {
+        var made: [FakeTransport] = []
+        let (host, _) = try hostWithPidFiles([:])
+        host.makeTransport = { _ in let t = FakeTransport(); made.append(t); return t }
+        let s = try host.startNew(in: "/tmp", prompt: "hello")
+        XCTAssertEqual((made[0].sent.first?["type"] as? String), "user", "the first prompt is sent")
+        XCTAssertNil(host.recentlyStarted)
+        made[0].emit(["type": "system", "subtype": "init", "session_id": "new-id"])
+        XCTAssertEqual(host.recentlyStarted, "new-id")
+        XCTAssertTrue(host.hosted("new-id") === s)
     }
 }

@@ -9,6 +9,8 @@ protocol ClaudeTransport: AnyObject {
     var onMessage: (([String: Any]) -> Void)? { get set }
     /// Called once when the process ends (exit status, last stderr text).
     var onExit: ((Int32, String) -> Void)? { get set }
+    /// The child's pid while running (nil for fakes).
+    var pid: Int32? { get }
     func start() throws
     func send(_ object: [String: Any])
     func terminate()

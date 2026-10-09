@@ -4,6 +4,16 @@ extension ContentView {
     /// Every sheet and alert the main window can present.
     func withDialogs<Content: View>(_ content: Content) -> some View {
         content
+        .sheet(isPresented: $showNewChat) {
+            NewChatSheet(defaultFolder: store.newSessionDir) { folder, prompt, mode in
+                do {
+                    selectedSessions = []
+                    startingChat = try host.startNew(in: folder, prompt: prompt, permissionMode: mode)
+                } catch {
+                    store.errorMessage = error.localizedDescription
+                }
+            }
+        }
         .sheet(item: $groupSheet) { request in
             switch request {
             case .create(let ids):

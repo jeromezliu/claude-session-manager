@@ -5,6 +5,7 @@ struct ClaudeSessionManagerApp: App {
     @StateObject private var remoteHosts: RemoteHostStore
     @StateObject private var store: SessionStore
     @StateObject private var skills: SkillStore
+    @StateObject private var host = SessionHost()
 
     init() {
         let remoteHostStore = RemoteHostStore()
@@ -19,6 +20,11 @@ struct ClaudeSessionManagerApp: App {
                 .environmentObject(store)
                 .environmentObject(skills)
                 .environmentObject(remoteHosts)
+                .environmentObject(host)
+                // Hosted claude processes end with the app.
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                    host.stopAll()
+                }
                 .frame(minWidth: 960, minHeight: 600)
                 .task { await store.reload() }
                 // Groups / titles may have changed in Claude Desktop meanwhile.

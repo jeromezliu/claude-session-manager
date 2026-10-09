@@ -12,6 +12,7 @@ struct SessionRow: View {
     // Observe the manager directly so the indicator appears/disappears even when
     // the AppKit-backed List reuses this (otherwise unchanged) row.
     @ObservedObject private var terminals = TerminalManager.shared
+    @EnvironmentObject private var host: SessionHost
 
     private var activity: TerminalActivity? {
         terminals.session(for: session.id)?.activity
@@ -21,7 +22,9 @@ struct SessionRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             // Fixed-width gutter so every row's text aligns, dot or not.
             ZStack {
-                if let activity {
+                if let hosted = host.hosted(session.id) {
+                    HostedDot(hosted: hosted)
+                } else if let activity {
                     ActivityDot(activity: activity)
                 }
             }

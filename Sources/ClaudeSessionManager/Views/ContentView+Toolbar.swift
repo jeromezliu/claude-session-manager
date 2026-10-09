@@ -57,6 +57,8 @@ extension ContentView {
                     Button(store.newSessionDir) {}.disabled(true)
                     Divider()
                     Button("Choose Folder…") { chooseFolderAndStartNewSession() }
+                    Divider()
+                    Button("New Chat (no terminal)…") { showNewChat = true }
                     if !remoteHosts.hosts.filter({ $0.enabled }).isEmpty {
                         Divider()
                         ForEach(remoteHosts.hosts.filter { $0.enabled }) { host in
