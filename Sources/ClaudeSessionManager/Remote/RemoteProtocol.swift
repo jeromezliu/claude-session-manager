@@ -47,6 +47,15 @@ enum RemoteDecision: Codable, Equatable, Sendable {
     case answer([String: String])
     case approvePlan
 
+    var auditLabel: String {
+        switch self {
+        case .allow(let always): return always ? "always allow" : "allow"
+        case .deny: return "deny"
+        case .answer: return "answer"
+        case .approvePlan: return "approve plan"
+        }
+    }
+
     var decision: RequestDecision {
         switch self {
         case .allow(let always): return .allow(always: always)

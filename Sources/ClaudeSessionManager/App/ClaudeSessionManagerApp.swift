@@ -8,6 +8,7 @@ struct ClaudeSessionManagerApp: App {
     @StateObject private var host: SessionHost
     @StateObject private var devices: DeviceStore
     @StateObject private var server: RemoteServer
+    @StateObject private var remote: RemoteAccessController
 
     init() {
         let remoteHostStore = RemoteHostStore()
@@ -18,7 +19,9 @@ struct ClaudeSessionManagerApp: App {
         let devices = DeviceStore()
         _host = StateObject(wrappedValue: host)
         _devices = StateObject(wrappedValue: devices)
-        _server = StateObject(wrappedValue: RemoteServer(host: host, devices: devices, data: nil))
+        let server = RemoteServer(host: host, devices: devices, data: nil)
+        _server = StateObject(wrappedValue: server)
+        _remote = StateObject(wrappedValue: RemoteAccessController(server: server))
     }
 
     var body: some Scene {
@@ -30,6 +33,7 @@ struct ClaudeSessionManagerApp: App {
                 .environmentObject(host)
                 .environmentObject(devices)
                 .environmentObject(server)
+                .environmentObject(remote)
                 // Hosted claude processes end with the app.
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     host.stopAll()
@@ -38,9 +42,7 @@ struct ClaudeSessionManagerApp: App {
                 .task {
                     await store.reload()
                     server.data = StoreRemoteDataSource(store: store, host: host)
-                    if UserDefaults.standard.bool(forKey: "remoteAccessEnabled") {
-                        RemoteAccess.apply(true, server: server)
-                    }
+                    remote.apply()
                 }
                 // Groups / titles may have changed in Claude Desktop meanwhile.
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -58,6 +60,14 @@ struct ClaudeSessionManagerApp: App {
                 Button("Refresh") { Task { await store.reload() } }
                     .keyboardShortcut("r", modifiers: .command)
             }
+        }
+
+        // Visible only while remote access is on: status and a kill switch.
+        MenuBarExtra("Remote Access", systemImage: "antenna.radiowaves.left.and.right",
+                     isInserted: Binding(get: { remote.enabled }, set: { if !$0 { remote.turnOff() } })) {
+            RemoteMenuBarContent()
+                .environmentObject(remote)
+                .environmentObject(server)
         }
     }
 }

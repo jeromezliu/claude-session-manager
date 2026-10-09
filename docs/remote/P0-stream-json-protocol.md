@@ -118,6 +118,14 @@ Every line is one JSON object.
 - **Busy detection** for sessions the host doesn't own: `~/.claude/sessions/<pid>.json` + pid liveness → the
   phone shows those read-only.
 
+## Flags the desktop app uses that we don't (yet)
+
+Claude Desktop drives its sessions with the same core flags, plus
+`--await-initialize` (the CLI waits for an `initialize` control request, used to
+register hooks/config up front) and `--replay-user-messages` (user turns are
+echoed on stdout). Neither is needed by the host: there are no SDK hooks to
+register, and user turns are already in the JSONL the host reads.
+
 ## Open items (not verified yet)
 
 - What happens to a pending `can_use_tool` if the host never answers — does the CLI time out? (Design: the host

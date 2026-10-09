@@ -26,8 +26,27 @@ final class RemoteServer: ObservableObject {
     /// Held strongly: the data source only reads app state, it doesn't point back here.
     var data: RemoteDataSource?
     var exposeOnNetwork = false
+    /// TLS identity; required when exposed on the network.
+    var tls: TLSIdentity?
     /// Seconds a new connection has to authenticate.
     var authTimeout: TimeInterval = 10
+    /// Interfaces remote connections may arrive on (BSD names, e.g. "en0",
+    /// "utun3"); nil = any. Loopback is always allowed.
+    var allowedInterfaces: Set<String>?
+    /// Ask on the Mac before a redeemed code turns into a device token.
+    var requiresPairingApproval = true
+    /// A device waiting for approval on the Mac (name, security code).
+    @Published private(set) var pendingPairing: PendingPairing?
+    /// Remote activity, for the audit log.
+    var onAudit: ((_ device: String?, _ action: String, _ detail: String) -> Void)?
+
+    struct PendingPairing: Identifiable, Equatable {
+        let id = UUID()
+        let deviceName: String
+        /// From the host certificate — the phone shows the same digits.
+        let securityCode: String
+    }
+    private var pairingDecision: ((Bool) -> Void)?
 
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: RemoteConnection] = [:]
@@ -44,7 +63,19 @@ final class RemoteServer: ObservableObject {
         let ws = NWProtocolWebSocket.Options()
         ws.autoReplyPing = true
         ws.maximumMessageSize = 4 * 1024 * 1024
-        let params = NWParameters.tcp
+        guard tls != nil || !exposeOnNetwork else {
+            throw NSError(domain: "ClaudeSessionManager", code: 30,
+                          userInfo: [NSLocalizedDescriptionKey: "Network access needs TLS."])
+        }
+        let params: NWParameters
+        if let tls {
+            let options = NWProtocolTLS.Options()
+            sec_protocol_options_set_local_identity(options.securityProtocolOptions, sec_identity_create(tls.identity)!)
+            sec_protocol_options_set_min_tls_protocol_version(options.securityProtocolOptions, .TLSv12)
+            params = NWParameters(tls: options, tcp: NWProtocolTCP.Options())
+        } else {
+            params = NWParameters.tcp
+        }
         params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
         if !exposeOnNetwork {
             params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port) ?? .any)
@@ -70,6 +101,30 @@ final class RemoteServer: ObservableObject {
         isRunning = false
         port = nil
         connectedDevices = []
+    }
+
+    /// The Mac user's answer to `pendingPairing`.
+    func decidePairing(_ approve: Bool) {
+        let decide = pairingDecision
+        pairingDecision = nil
+        pendingPairing = nil
+        decide?(approve)
+    }
+
+    /// Hold a redeemed pairing until the Mac user approves (2 min timeout).
+    func requestPairingApproval(deviceName: String, _ completion: @escaping (Bool) -> Void) {
+        guard requiresPairingApproval else { return completion(true) }
+        decidePairing(false)   // one at a time
+        let pending = PendingPairing(deviceName: deviceName, securityCode: tls?.securityCode ?? "—")
+        pendingPairing = pending
+        pairingDecision = completion
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+            if self?.pendingPairing?.id == pending.id { self?.decidePairing(false) }
+        }
+    }
+
+    func audit(_ device: String?, _ action: String, _ detail: String = "") {
+        onAudit?(device, action, detail)
     }
 
     /// Drop every connection of a revoked device.
@@ -128,6 +183,7 @@ final class RemoteConnection {
         nw.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
                 switch state {
+                case .ready: self?.checkInterface()
                 case .failed, .cancelled: self?.close()
                 default: break
                 }
@@ -138,6 +194,42 @@ final class RemoteConnection {
         let timeout = server?.authTimeout ?? 10
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
             if let self, self.device == nil { self.close() }
+        }
+    }
+
+    /// Only accept connections from private addresses (a LAN or VPN —
+    /// never the internet, e.g. via a global IPv6 address on Wi-Fi), arriving
+    /// on an allowed interface.
+    private func checkInterface() {
+        guard let server else { return }
+        if case .hostPort(let host, _) = nw.endpoint, !Self.isPrivate(host) {
+            server.audit(nil, "rejected", "connection from public address \(host)")
+            return close()
+        }
+        guard let allowed = server.allowedInterfaces else { return }
+        let name = nw.currentPath?.availableInterfaces.first?.name ?? ""
+        if name.hasPrefix("lo") || allowed.contains(name) { return }
+        server.audit(nil, "rejected", "connection on interface \(name.isEmpty ? "?" : name)")
+        close()
+    }
+
+    /// Loopback, RFC 1918, CGNAT (100.64/10, used by Tailscale), link-local,
+    /// and IPv6 unique-local (fc00::/7) addresses.
+    nonisolated static func isPrivate(_ host: NWEndpoint.Host) -> Bool {
+        switch host {
+        case .ipv4(let a):
+            let b = [UInt8](a.rawValue)
+            guard b.count == 4 else { return false }
+            return b[0] == 127 || b[0] == 10 || (b[0] == 172 && (16...31).contains(b[1]))
+                || (b[0] == 192 && b[1] == 168) || (b[0] == 100 && (64...127).contains(b[1]))
+                || (b[0] == 169 && b[1] == 254)
+        case .ipv6(let a):
+            if a.isLoopback || a.isLinkLocal { return true }
+            if let v4 = a.asIPv4 { return isPrivate(.ipv4(v4)) }
+            let b = [UInt8](a.rawValue)
+            return b.first.map { $0 & 0xFE == 0xFC } ?? false
+        default:
+            return false   // names shouldn't appear for an accepted connection
         }
     }
 
@@ -195,19 +287,31 @@ final class RemoteConnection {
                     return reject("Protocol \(version) not supported (host speaks \(RemoteProtocol.version))")
                 }
                 guard let d = server.devices.authenticate(token: token) else {
+                    server.audit(nil, "rejected", "unknown or revoked token")
                     return reject("Unknown or revoked device")
                 }
                 device = d
                 server.connectionChanged()
+                server.audit(d.name, "connected")
                 send(.welcome(protocolVersion: RemoteProtocol.version, hostName: Host.current().localizedName ?? "Mac",
                               claudeVersion: nil))
             case .pair(let code, let name):
-                guard let result = server.devices.completePairing(code: code, deviceName: name) else {
+                guard server.devices.redeem(code: code) else {
+                    server.audit(name, "pairing rejected", "wrong or expired code")
                     return reject("Wrong or expired pairing code")
                 }
-                device = result.device
-                server.connectionChanged()
-                send(.paired(deviceID: result.device.id, token: result.token))
+                server.requestPairingApproval(deviceName: name) { [weak self] approved in
+                    guard let self, let server = self.server, !self.closed else { return }
+                    guard approved else {
+                        server.audit(name, "pairing denied on the Mac")
+                        return self.reject("Pairing was declined on the Mac")
+                    }
+                    let result = server.devices.addDevice(named: name)
+                    self.device = result.device
+                    server.connectionChanged()
+                    server.audit(result.device.name, "paired")
+                    self.send(.paired(deviceID: result.device.id, token: result.token))
+                }
             default:
                 reject("Authenticate first")
             }
@@ -237,25 +341,31 @@ final class RemoteConnection {
         case .unsubscribe(let id):
             subscriptions.removeValue(forKey: id)?.cancel()
         case .send(let mid, let id, let text):
+            server.audit(device?.name, "message", "\(id) · \(text.count) chars")
             mutate(mid, id) { live in live.send(text) }
         case .answer(let mid, let id, let requestID, let decision):
             guard let live = server.host.hosted(id), live.pending.contains(where: { $0.id == requestID }) else {
                 return send(.ack(id: mid, ok: false, error: "That request is no longer open", sessionID: id))
             }
+            let tool = live.pending.first { $0.id == requestID }?.ask.toolName ?? "?"
             live.answer(requestID, decision.decision)
+            server.audit(device?.name, "answered", "\(id) · \(tool) · \(decision.auditLabel)")
             send(.ack(id: mid, ok: true, error: nil, sessionID: id))
         case .interrupt(let mid, let id):
             guard let live = server.host.hosted(id) else {
                 return send(.ack(id: mid, ok: false, error: "Not running", sessionID: id))
             }
             live.interrupt()
+            server.audit(device?.name, "interrupted", id)
             send(.ack(id: mid, ok: true, error: nil, sessionID: id))
         case .setPermissionMode(let mid, let id, let mode):
             guard ["default", "acceptEdits", "plan"].contains(mode) else {
                 return send(.ack(id: mid, ok: false, error: "Mode \(mode) isn't allowed remotely", sessionID: id))
             }
+            server.audit(device?.name, "permission mode", "\(id) · \(mode)")
             mutate(mid, id) { live in live.setPermissionMode(mode) }
         case .startSession(let mid, let cwd, let prompt, let mode):
+            server.audit(device?.name, "new session", "\(cwd) · \(mode)")
             startSession(mid, cwd: cwd, prompt: prompt, mode: mode)
         }
     }

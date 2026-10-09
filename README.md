@@ -128,6 +128,17 @@ cd claude-session-manager
   the session still resumes correctly.
 - **Auto-refresh** — the list and open transcript update live as sessions change
   on disk; no need to relaunch.
+- **Remote access (for the upcoming phone app)** — ⋯ → *Remote Access…* turns
+  on a WebSocket server (TLS with a self-signed certificate made on first use;
+  clients pin its fingerprint). Reach is *This Mac only* or *Local network /
+  VPN*, optionally limited to chosen interfaces; connections from public
+  addresses (e.g. a global IPv6 on Wi-Fi) are always refused. Pairing: show a
+  QR code / 8-character one-time code, then approve the device on the Mac
+  after checking both screens show the same 6-digit security code. Devices get
+  a 256-bit token (only its hash is stored) and can be revoked. Remote
+  activity is logged; the Mac is kept awake while it's on; a menu bar icon
+  shows who's connected and turns it off. Remote clients can't use
+  bypass-permissions mode.
 - **Version** — the running version is shown at the bottom of the ⋯ menu (and
   in *About*); local builds read e.g. `1.3.0+2.c982008` (2 commits past v1.3.0).
 - **Hides temp sessions** — throwaway sessions tools spawn in `$TMPDIR` (e.g.

@@ -57,17 +57,28 @@ final class DeviceStore: ObservableObject {
     /// Redeem the code: returns the new device and its token (to send once),
     /// or nil. Too many wrong guesses close pairing.
     func completePairing(code: String, deviceName: String, now: Date = Date()) -> (device: PairedDevice, token: String)? {
+        guard redeem(code: code, now: now) else { return nil }
+        return addDevice(named: deviceName, now: now)
+    }
+
+    /// Check and consume the code (single use; wrong guesses count).
+    func redeem(code: String, now: Date = Date()) -> Bool {
         guard let expected = pairingCode, let expires = pairingExpires, now < expires else {
             cancelPairing()
-            return nil
+            return false
         }
         let typed = code.uppercased().filter { !$0.isWhitespace && $0 != "-" }
         guard Self.constantTimeEqual(typed, expected) else {
             failedAttempts += 1
             if failedAttempts >= Self.maxFailedAttempts { cancelPairing() }
-            return nil
+            return false
         }
         cancelPairing()
+        return true
+    }
+
+    /// Register a device (after its code was redeemed and the pairing approved).
+    func addDevice(named deviceName: String, now: Date = Date()) -> (device: PairedDevice, token: String) {
         let token = Self.randomToken()
         let name = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         let device = PairedDevice(id: UUID().uuidString, name: name.isEmpty ? "Device" : String(name.prefix(60)),
@@ -108,7 +119,7 @@ final class DeviceStore: ObservableObject {
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }
 
-    static func randomToken() -> String {
+    nonisolated static func randomToken() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         return Data(bytes).base64EncodedString()
@@ -116,7 +127,7 @@ final class DeviceStore: ObservableObject {
             .replacingOccurrences(of: "=", with: "")
     }
 
-    static func hash(_ token: String) -> String {
+    nonisolated static func hash(_ token: String) -> String {
         SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 

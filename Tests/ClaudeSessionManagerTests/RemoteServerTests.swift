@@ -25,8 +25,11 @@ final class RemoteServerTests: XCTestCase {
 
     final class Client {
         let task: URLSessionWebSocketTask
-        init(port: UInt16) {
-            task = URLSession.shared.webSocketTask(with: URL(string: "ws://127.0.0.1:\(port)/")!)
+        let session: URLSession
+        /// TLS with the host's fingerprint pinned (the way the phone connects).
+        init(port: UInt16, pin: String) {
+            session = URLSession(configuration: .ephemeral, delegate: PinnedTLSDelegate(fingerprint: pin), delegateQueue: nil)
+            task = session.webSocketTask(with: URL(string: "wss://127.0.0.1:\(port)/")!)
             task.resume()
         }
         func send(_ m: ClientMessage) async throws {
@@ -70,6 +73,10 @@ final class RemoteServerTests: XCTestCase {
     private var devices: DeviceStore!
     private var data: StubData!
     private var transports: [HostedSessionTests.FakeTransport] = []
+    private var tls: TLSIdentity!
+    private static let keychainAccount = "csm-tls-identity-tests"
+
+    private func makeClient() -> Client { Client(port: server.port!, pin: tls.fingerprint) }
 
     override func setUp() async throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("csm-remote-\(UUID().uuidString)")
@@ -83,8 +90,11 @@ final class RemoteServerTests: XCTestCase {
         }
         devices = DeviceStore(fileURL: dir.appendingPathComponent("devices.json"))
         data = StubData()
+        tls = try TLSIdentity.loadOrCreate(in: dir.appendingPathComponent("tls"), keychainAccount: Self.keychainAccount)
         server = RemoteServer(host: host, devices: devices, data: data)
+        server.tls = tls
         server.authTimeout = 2
+        server.requiresPairingApproval = false
         try server.start(port: 0)
         for _ in 0..<50 where server.port == nil { try await Task.sleep(nanoseconds: 20_000_000) }
         XCTAssertNotNil(server.port)
@@ -92,6 +102,7 @@ final class RemoteServerTests: XCTestCase {
 
     override func tearDown() async throws {
         server.stop()
+        SSHKeychain.deletePassword(for: Self.keychainAccount)
         try? FileManager.default.removeItem(at: dir)
     }
 
@@ -109,11 +120,11 @@ final class RemoteServerTests: XCTestCase {
     /// Pair a device and return an authenticated client.
     private func connectedClient() async throws -> Client {
         let code = devices.beginPairing()
-        let pairing = Client(port: server.port!)
+        let pairing = makeClient()
         try await pairing.send(.pair(code: code, deviceName: "Test iPhone"))
         guard case .paired(_, let token) = try await pairing.next() else { XCTFail("not paired"); throw URLError(.badServerResponse) }
         pairing.close()
-        let client = Client(port: server.port!)
+        let client = makeClient()
         try await client.send(.hello(protocolVersion: RemoteProtocol.version, token: token))
         guard case .welcome = try await client.next() else { XCTFail("no welcome"); throw URLError(.badServerResponse) }
         return client
@@ -122,14 +133,14 @@ final class RemoteServerTests: XCTestCase {
     // MARK: Auth
 
     func testRejectsRequestsBeforeAuth() async throws {
-        let c = Client(port: server.port!)
+        let c = makeClient()
         try await c.send(.listSessions)
         guard case .error = try await c.next() else { return XCTFail("expected an error") }
         await assertClosed(c)
     }
 
     func testRejectsUnknownToken() async throws {
-        let c = Client(port: server.port!)
+        let c = makeClient()
         try await c.send(.hello(protocolVersion: RemoteProtocol.version, token: "nope"))
         guard case .error(let m) = try await c.next() else { return XCTFail("expected an error") }
         XCTAssertTrue(m.contains("Unknown"))
@@ -146,7 +157,7 @@ final class RemoteServerTests: XCTestCase {
         XCTAssertTrue(stored.contains(devices.devices[0].tokenHash))
 
         // The used code doesn't pair a second device.
-        let again = Client(port: server.port!)
+        let again = makeClient()
         try await again.send(.pair(code: "WHATEVER", deviceName: "x"))
         guard case .error = try await again.next() else { return XCTFail() }
     }
@@ -158,7 +169,7 @@ final class RemoteServerTests: XCTestCase {
     }
 
     func testUnauthenticatedConnectionTimesOut() async throws {
-        let c = Client(port: server.port!)
+        let c = makeClient()
         try await Task.sleep(nanoseconds: 2_600_000_000)
         await assertClosed(c)
     }
@@ -297,5 +308,68 @@ final class RemoteServerTests: XCTestCase {
         for _ in 0..<600 where live.lastResult == nil { try await Task.sleep(nanoseconds: 100_000_000) }
         XCTAssertEqual(live.lastResult?.text, "REMOTE OK")
         live.stop()
+    }
+
+    // MARK: TLS
+
+    func testWrongPinIsRefused() async throws {
+        let bad = Client(port: server.port!, pin: String(repeating: "0", count: 64))
+        try? await bad.send(.listSessions)
+        await assertClosed(bad)
+    }
+
+    func testIdentityIsReusedAndFingerprintStable() throws {
+        let again = try TLSIdentity.loadOrCreate(in: dir.appendingPathComponent("tls"), keychainAccount: Self.keychainAccount)
+        XCTAssertEqual(again.fingerprint, tls.fingerprint)
+        XCTAssertEqual(tls.fingerprint.count, 64)
+        XCTAssertEqual(tls.securityCode.count, 7)   // "123 456"
+        let attrs = try FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent("tls/identity.p12").path)
+        XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    func testPairingWaitsForApprovalOnTheMac() async throws {
+        server.requiresPairingApproval = true
+        let code = devices.beginPairing()
+        let c = makeClient()
+        try await c.send(.pair(code: code, deviceName: "iPad"))
+        for _ in 0..<50 where server.pendingPairing == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        let pending = try XCTUnwrap(server.pendingPairing)
+        XCTAssertEqual(pending.deviceName, "iPad")
+        XCTAssertEqual(pending.securityCode, tls.securityCode, "the phone derives the same digits from the pinned cert")
+        XCTAssertTrue(devices.devices.isEmpty, "no token before approval")
+        server.decidePairing(true)
+        guard case .paired = try await c.next() else { return XCTFail() }
+        XCTAssertEqual(devices.devices.count, 1)
+    }
+
+    func testDeclinedPairingGetsNoToken() async throws {
+        server.requiresPairingApproval = true
+        let code = devices.beginPairing()
+        let c = makeClient()
+        try await c.send(.pair(code: code, deviceName: "Stranger"))
+        for _ in 0..<50 where server.pendingPairing == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        server.decidePairing(false)
+        guard case .error(let m) = try await c.next() else { return XCTFail() }
+        XCTAssertTrue(m.contains("declined"))
+        XCTAssertTrue(devices.devices.isEmpty)
+    }
+
+    func testDisallowedInterfaceIsDropped() async throws {
+        server.allowedInterfaces = ["en99"]   // loopback stays allowed…
+        let c = try await connectedClient()
+        try await c.send(.ping)
+        guard case .pong = try await c.next() else { return XCTFail("loopback must keep working") }
+    }
+
+    func testAuditRecordsRemoteActions() async throws {
+        var log: [String] = []
+        server.onAudit = { device, action, _ in log.append("\(device ?? "-"): \(action)") }
+        _ = try addSession("s1")
+        let c = try await connectedClient()
+        try await c.send(.send(id: "m1", sessionID: "s1", text: "hi"))
+        _ = try await c.next(where: { if case .ack = $0 { return true }; return false })
+        XCTAssertTrue(log.contains("Test iPhone: paired"))
+        XCTAssertTrue(log.contains("Test iPhone: connected"))
+        XCTAssertTrue(log.contains("Test iPhone: message"))
     }
 }

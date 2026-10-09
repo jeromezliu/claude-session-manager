@@ -36,6 +36,7 @@ struct ContentView: View {
     /// A new headless chat whose transcript isn't listed yet.
     @State var startingChat: HostedSession?
     @EnvironmentObject var host: SessionHost
+    @EnvironmentObject var server: RemoteServer
     @State var remoteNewSessionHost: RemoteHost?
 
     private var mainScene: some View {

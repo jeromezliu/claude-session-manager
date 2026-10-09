@@ -4,6 +4,15 @@ extension ContentView {
     /// Every sheet and alert the main window can present.
     func withDialogs<Content: View>(_ content: Content) -> some View {
         content
+        // A phone redeemed the pairing code: the person at the Mac decides.
+        .alert("Pair “\(server.pendingPairing?.deviceName ?? "")”?",
+               isPresented: Binding(get: { server.pendingPairing != nil }, set: { if !$0 { server.decidePairing(false) } }),
+               presenting: server.pendingPairing) { _ in
+            Button("Pair") { server.decidePairing(true) }
+            Button("Decline", role: .cancel) { server.decidePairing(false) }
+        } message: { p in
+            Text("Check that the device shows the same security code:\n\n\(p.securityCode)\n\nIt will be able to read and drive your Claude sessions.")
+        }
         .sheet(isPresented: $showRemoteAccess) {
             RemoteAccessSheet()
         }
