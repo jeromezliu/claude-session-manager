@@ -15,7 +15,7 @@ final class SummaryCache: @unchecked Sendable {
 
     /// Bump whenever `SummaryState` or the parse logic changes meaning, so
     /// stale persisted state is discarded instead of resumed.
-    private static let formatVersion = 3   // 3: prompts cleaned of injected tags (incl. task notifications)
+    private static let formatVersion = 4   // 4: custom-title support
     /// Bytes hashed at the start of the file to detect a rewrite (same path,
     /// different content) that happens to be at least as long as before.
     private static let fingerprintLength = 4096

@@ -6,7 +6,7 @@ struct RenameSheet: View {
 
     var body: some View {
         NameSheet(title: "Rename Session",
-                  message: "Sets a new title by appending an ai-title entry. The transcript itself is left untouched, so the session can still be resumed.",
+                  message: "Sets a new title the way /rename does (appends a custom-title entry). The transcript itself is left untouched, so the session can still be resumed.",
                   placeholder: "Title", initial: session.title, onSave: onSave)
     }
 }

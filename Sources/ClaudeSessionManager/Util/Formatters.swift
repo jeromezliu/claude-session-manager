@@ -23,6 +23,32 @@ enum Fmt {
         return relative.localizedString(for: date, relativeTo: now)
     }
 
+    private static let shortDate: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("MMddHHmm")
+        return f
+    }()
+
+    /// Compact date + time for lists, e.g. "10/03, 14:54" (locale order).
+    static func short(_ date: Date) -> String { shortDate.string(from: date) }
+
+    /// A span as its largest units: "45s", "12m", "3h 20m", "5d 2h".
+    static func duration(_ seconds: TimeInterval) -> String {
+        let s = Int(max(0, seconds))
+        switch s {
+        case ..<60: return "\(s)s"
+        case ..<3600: return "\(s / 60)m"
+        case ..<86_400: return s % 3600 / 60 == 0 ? "\(s / 3600)h" : "\(s / 3600)h \(s % 3600 / 60)m"
+        default: return s % 86_400 / 3600 == 0 ? "\(s / 86_400)d" : "\(s / 86_400)d \(s % 86_400 / 3600)h"
+        }
+    }
+
+    /// MCP tools are named `mcp__<server>__<tool>`; show just the tool.
+    static func toolName(_ name: String) -> String {
+        guard name.hasPrefix("mcp__"), let r = name.range(of: "__", options: .backwards) else { return name }
+        return String(name[r.upperBound...])
+    }
+
     static func full(_ date: Date?) -> String {
         guard let date else { return "—" }
         return dateTime.string(from: date)

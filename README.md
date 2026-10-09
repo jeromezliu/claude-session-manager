@@ -88,9 +88,16 @@ cd claude-session-manager
   desktop app are hidden unless *Show archived sessions* is on.
 - **Multi-select** — ⌘/⇧-click to select several sessions and move them to the
   Trash in one go.
-- **Transcript viewer** — newest turns first, with attachments / tool calls /
-  system events hidden by default (toggle the eye icon to show them). Each turn
-  shows text, thinking, and collapsible tool calls/results.
+- **Session overview** — the detail pane opens on an *Overview*: the desktop
+  recap (or Claude's latest reply), *Your Requests* (every prompt, newest first;
+  click one to jump to it), *Outputs* (PRs, files handed to you, files changed —
+  all clickable) and a few stats (span, tokens, context, compactions). Other
+  details (session id, models, version, …) sit behind the ⓘ button.
+- **Conversation** — the *Conversation* tab reads top to bottom (opening at the
+  newest turn) with Markdown rendered — headings, lists, code, quotes, tables;
+  each stretch of tool work is folded into one line (e.g. "12 tool calls · Bash
+  ×8, Edit ×3") that expands to the calls. Attachments and system events are
+  hidden unless toggled on.
 - **Token usage** — a header chip shows context usage vs the model's window
   (e.g. `context 89.1k/1M · 45%`), read from Claude's own per-turn usage.
   Window is configurable (Auto / 200K / 1M) in the ⋯ menu.
@@ -107,8 +114,8 @@ cd claude-session-manager
 - **App-managed Trash** — deleting moves the `.jsonl` to an in-app trash
   (`~/Library/Application Support/ClaudeSessionManager/Trash`). Recover it to its
   original location, delete permanently, or empty the trash — from the Trash tab.
-- **Rename** — set a session title safely by appending an `ai-title` event
-  (exactly what Claude Code does); the message history is never rewritten, so
+- **Rename** — set a session title safely by appending a `custom-title` event
+  (exactly what `/rename` does); the message history is never rewritten, so
   the session still resumes correctly.
 - **Auto-refresh** — the list and open transcript update live as sessions change
   on disk; no need to relaunch.
@@ -170,7 +177,7 @@ private mirror.
 
 Each session is a JSONL file; every line is a typed event. The app reads
 `user`, `assistant`, `attachment`, and `system` events, plus metadata lines
-(`ai-title`, `last-prompt`, `mode`, `permission-mode`). The real working
+(`custom-title`, `ai-title`, `last-prompt`, `pr-link`, `mode`, `permission-mode`). The real working
 directory and git branch come from `cwd` / `gitBranch` on message lines — the
 encoded folder name is ambiguous because path segments can contain `-`.
 

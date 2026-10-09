@@ -17,9 +17,9 @@ enum SessionActions {
         }
     }
 
-    /// Rename by appending a fresh `ai-title` event line — exactly what Claude Code
-    /// does when it (re)generates a title. Last one wins, and the message DAG is
-    /// untouched, so resuming the session is unaffected. For a remote session,
+    /// Rename by appending a `custom-title` event line — exactly what Claude
+    /// Code's `/rename` writes. It outranks generated `ai-title`s, the last one
+    /// wins, and the message DAG is untouched, so resuming is unaffected. For a remote session,
     /// the event is appended on the host itself over SSH, then the mirror is
     /// resynced so the change shows up locally.
     static func rename(_ session: SessionSummary, to newTitle: String, remoteHostStore: RemoteHostStore? = nil) async throws {
@@ -27,8 +27,8 @@ enum SessionActions {
         guard !title.isEmpty else { throw ActionError.renameFailed("Title is empty.") }
 
         let line: [String: Any] = [
-            "type": "ai-title",
-            "aiTitle": title,
+            "type": "custom-title",
+            "customTitle": title,
             "sessionId": session.id
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: line, options: [.sortedKeys]),

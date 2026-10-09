@@ -74,7 +74,11 @@ enum SessionParser {
         var cwd = ""
         var gitBranch: String?
         var version: String?
+        /// Latest `ai-title` (Claude's generated title).
         var title: String?
+        /// Latest `custom-title` (set by `/rename`, or Rename in this app) —
+        /// wins over the generated one.
+        var customTitle: String?
         var firstPrompt: String?
         var lastPrompt: String?
         var messageCount = 0
@@ -121,6 +125,8 @@ enum SessionParser {
                 }
             case "ai-title":
                 if let t = obj["aiTitle"] as? String, !t.isEmpty { title = t }
+            case "custom-title":
+                if let t = obj["customTitle"] as? String, !t.isEmpty { customTitle = t }
             case "last-prompt":
                 if let p = (obj["lastPrompt"] as? String).flatMap(PromptText.clean) { lastPrompt = p }
             default:
@@ -136,7 +142,7 @@ enum SessionParser {
                 cwd: cwd,
                 gitBranch: gitBranch,
                 claudeVersion: version,
-                title: title ?? firstPrompt.map { String($0.prefix(80)) } ?? "(untitled session)",
+                title: customTitle ?? title ?? firstPrompt.map { String($0.prefix(80)) } ?? "(untitled session)",
                 firstPrompt: firstPrompt,
                 lastPrompt: lastPrompt,
                 messageCount: messageCount,
@@ -184,17 +190,97 @@ enum SessionParser {
         transcriptEvents(for: url)?.events ?? []
     }
 
-    /// Parse transcript events from `cursor` onward. Returns the new events
-    /// and the cursor to resume from, or nil if the file can't be read.
-    static func transcriptEvents(for url: URL, from cursor: TranscriptCursor = TranscriptCursor())
-        -> (events: [TranscriptEvent], cursor: TranscriptCursor)? {
+    /// Parse transcript events from `cursor` onward, folding what the lines
+    /// say about outputs into `insights`. Returns the new events, the updated
+    /// insights and the cursor to resume from, or nil if the file can't be read.
+    static func transcriptEvents(for url: URL, from cursor: TranscriptCursor = TranscriptCursor(),
+                                 insights: SessionInsights = SessionInsights())
+        -> (events: [TranscriptEvent], insights: SessionInsights, cursor: TranscriptCursor)? {
         var events: [TranscriptEvent] = []
+        var insights = insights
         var index = cursor.lineIndex
         guard let end = readLines(of: url, from: cursor.offset, { obj in
             defer { index += 1 }
-            if let obj, let event = event(from: obj, index: index) { events.append(event) }
+            guard let obj else { return }
+            insights.consume(obj)
+            if let event = event(from: obj, index: index) { events.append(event) }
         }) else { return nil }
-        return (events, TranscriptCursor(offset: end, lineIndex: index))
+        return (events, insights, TranscriptCursor(offset: end, lineIndex: index))
+    }
+
+    /// What a session produced, gathered while reading its transcript.
+    struct SessionInsights: Sendable, Equatable {
+        struct PullRequest: Hashable, Sendable {
+            let number: Int
+            let url: String
+            let repository: String
+        }
+        struct DeliveredFile: Hashable, Sendable {
+            let path: String
+            let caption: String?
+        }
+
+        /// Latest desktop recap (`away_summary`): goal, state, next step.
+        var recap: String?
+        var recapDate: Date?
+        var pullRequests: [PullRequest] = []
+        /// Files handed to the user (`SendUserFile`), oldest first, deduped.
+        var deliveredFiles: [DeliveredFile] = []
+        /// Path → number of Edit/Write/NotebookEdit calls on it.
+        var editedFiles: [String: Int] = [:]
+        /// Times the conversation was compacted.
+        var compactions = 0
+
+        mutating func consume(_ obj: [String: Any]) {
+            switch obj["type"] as? String {
+            case "pr-link":
+                guard let url = obj["prUrl"] as? String, !pullRequests.contains(where: { $0.url == url }) else { return }
+                pullRequests.append(PullRequest(number: (obj["prNumber"] as? Int) ?? 0, url: url,
+                                                repository: (obj["prRepository"] as? String) ?? ""))
+            case "system":
+                switch obj["subtype"] as? String {
+                case "away_summary":
+                    if let text = (obj["content"] as? String).map(Self.stripRecapHint), !text.isEmpty {
+                        recap = text
+                        recapDate = parseDate(obj["timestamp"])
+                    }
+                case "compact_boundary":
+                    compactions += 1
+                default:
+                    break
+                }
+            case "assistant":
+                let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+                for block in content where (block["type"] as? String) == "tool_use" {
+                    let input = block["input"] as? [String: Any] ?? [:]
+                    switch block["name"] as? String {
+                    case "Edit", "Write", "MultiEdit", "NotebookEdit":
+                        if let path = (input["file_path"] ?? input["notebook_path"]) as? String {
+                            editedFiles[path, default: 0] += 1
+                        }
+                    case "SendUserFile":
+                        let caption = (input["caption"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                        for case let path as String in (input["files"] as? [Any]) ?? []
+                        where !deliveredFiles.contains(where: { $0.path == path }) {
+                            deliveredFiles.append(DeliveredFile(path: path, caption: caption))
+                        }
+                    default:
+                        break
+                    }
+                }
+            default:
+                break
+            }
+        }
+
+        /// Recaps end with a settings hint like "(disable recaps in /config)".
+        private static func stripRecapHint(_ s: String) -> String {
+            var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.hasSuffix(")"), let open = t.range(of: "(disable recaps", options: .backwards) {
+                t = String(t[..<open.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return t
+        }
     }
 
     private static func event(from obj: [String: Any], index: Int) -> TranscriptEvent? {
@@ -205,7 +291,9 @@ enum SessionParser {
         case "user":
             let msg = obj["message"] as? [String: Any]
             let blocks = contentBlocks(from: msg?["content"], toolResult: obj["toolUseResult"], cleanText: true)
-            return blocks.isEmpty ? nil : .init(id: index, kind: .user, timestamp: ts, model: nil, blocks: blocks)
+            // isMeta turns are harness-generated, not something the user typed.
+            let kind: TranscriptEvent.Kind = (obj["isMeta"] as? Bool) == true ? .meta : .user
+            return blocks.isEmpty ? nil : .init(id: index, kind: kind, timestamp: ts, model: nil, blocks: blocks)
         case "assistant":
             let msg = obj["message"] as? [String: Any]
             let blocks = contentBlocks(from: msg?["content"], toolResult: nil)
