@@ -283,9 +283,14 @@ private struct SessionOverview: View {
     @ViewBuilder
     private var outputs: some View {
         let edited = insights.editedFiles.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
-        if !insights.pullRequests.isEmpty || !insights.deliveredFiles.isEmpty || !edited.isEmpty {
+        if !insights.artifacts.isEmpty || !insights.pullRequests.isEmpty
+            || !insights.deliveredFiles.isEmpty || !edited.isEmpty {
             OverviewSection(title: "Outputs", detail: nil) {
                 VStack(alignment: .leading, spacing: 0) {
+                    ForEach(insights.artifacts, id: \.id) { artifact in
+                        ArtifactRow(artifact: artifact)
+                        Divider()
+                    }
                     ForEach(insights.pullRequests, id: \.self) { pr in
                         OutputRow(icon: "arrow.triangle.pull", title: "#\(pr.number)",
                                   subtitle: pr.repository) {
@@ -418,6 +423,78 @@ private struct OutputRow: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.5)
+    }
+}
+
+/// A published artifact: open it, reveal its source file, or copy its link.
+private struct ArtifactRow: View {
+    let artifact: SessionParser.SessionInsights.Artifact
+    @State private var copied = false
+
+    private var sourceExists: Bool {
+        artifact.path.map { FileManager.default.fileExists(atPath: $0) } ?? false
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "macwindow")
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 18)
+            Button(action: open) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(artifact.title ?? artifact.path.map { ($0 as NSString).lastPathComponent } ?? "Artifact")
+                        .lineLimit(1)
+                    if let d = artifact.description {
+                        Text(d).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(artifact.url)
+
+            HStack(spacing: 2) {
+                if sourceExists, let path = artifact.path {
+                    iconButton("folder", help: "Reveal source in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                    }
+                }
+                iconButton(copied ? "checkmark" : "link", help: "Copy link") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(artifact.url, forType: .string)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+                }
+                iconButton("arrow.up.forward.app", help: "Open in browser", action: open)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .contextMenu {
+            Button("Open in Browser", action: open)
+            Button("Copy Link") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(artifact.url, forType: .string)
+            }
+            if sourceExists, let path = artifact.path {
+                Button("Reveal Source in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                }
+            }
+        }
+    }
+
+    private func open() {
+        if let url = URL(string: artifact.url) { NSWorkspace.shared.open(url) }
+    }
+
+    private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).frame(width: 24, height: 22)
+        }
+        .buttonStyle(.borderless)
+        .help(help)
     }
 }
 

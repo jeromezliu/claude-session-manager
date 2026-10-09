@@ -219,11 +219,24 @@ enum SessionParser {
             let path: String
             let caption: String?
         }
+        /// A page published with the Artifact tool (claude.ai/code/artifact/…).
+        struct Artifact: Hashable, Sendable {
+            let id: String
+            var url: String
+            var title: String?
+            /// The local file it was published from.
+            var path: String?
+            var description: String?
+        }
 
         /// Latest desktop recap (`away_summary`): goal, state, next step.
         var recap: String?
         var recapDate: Date?
         var pullRequests: [PullRequest] = []
+        /// Published artifacts, first publish first; a republish updates in place.
+        var artifacts: [Artifact] = []
+        /// Artifact tool_use id → its description, until the result arrives.
+        private var artifactDescriptions: [String: String] = [:]
         /// Files handed to the user (`SendUserFile`), oldest first, deduped.
         var deliveredFiles: [DeliveredFile] = []
         /// Path → number of Edit/Write/NotebookEdit calls on it.
@@ -258,6 +271,11 @@ enum SessionParser {
                         if let path = (input["file_path"] ?? input["notebook_path"]) as? String {
                             editedFiles[path, default: 0] += 1
                         }
+                    case "Artifact":
+                        if let id = block["id"] as? String,
+                           let d = (input["description"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) {
+                            artifactDescriptions[id] = d
+                        }
                     case "SendUserFile":
                         let caption = (input["caption"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                         for case let path as String in (input["files"] as? [Any]) ?? []
@@ -267,6 +285,23 @@ enum SessionParser {
                     default:
                         break
                     }
+                }
+            case "user":
+                // A publish result carries {url, path, artifact_id, title}.
+                guard let r = obj["toolUseResult"] as? [String: Any],
+                      let id = r["artifact_id"] as? String, let url = r["url"] as? String else { return }
+                let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+                let useID = content.lazy.compactMap { $0["tool_use_id"] as? String }.first
+                let description = useID.flatMap { artifactDescriptions.removeValue(forKey: $0) }
+                let title = (r["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                let path = (r["path"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                if let i = artifacts.firstIndex(where: { $0.id == id }) {
+                    artifacts[i].url = url
+                    artifacts[i].title = title ?? artifacts[i].title
+                    artifacts[i].path = path ?? artifacts[i].path
+                    artifacts[i].description = description ?? artifacts[i].description
+                } else {
+                    artifacts.append(Artifact(id: id, url: url, title: title, path: path, description: description))
                 }
             default:
                 break

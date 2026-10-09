@@ -66,6 +66,25 @@ final class DetailTests: XCTestCase {
         XCTAssertEqual(r.insights.deliveredFiles.first?.caption, "the data")
     }
 
+    func testInsightsCollectArtifactsAndRepublishUpdatesInPlace() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("csm-a-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("s.jsonl")
+        func publish(_ use: String, title: String) -> [String] {
+            [#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"\#(use)","name":"Artifact","input":{"file_path":"/w/page.html","description":"Delivery notes"}}]}}"#,
+             #"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"\#(use)","content":"Published"}]},"toolUseResult":{"url":"https://claude.ai/code/artifact/abc","path":"/w/page.html","artifact_id":"abc","title":"\#(title)"}}"#]
+        }
+        let lines = publish("t1", title: "Draft") + publish("t2", title: "Final")
+        try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+        let a = try XCTUnwrap(SessionParser.transcriptEvents(for: url)).insights.artifacts
+        XCTAssertEqual(a.count, 1)
+        XCTAssertEqual(a.first?.title, "Final")
+        XCTAssertEqual(a.first?.url, "https://claude.ai/code/artifact/abc")
+        XCTAssertEqual(a.first?.path, "/w/page.html")
+        XCTAssertEqual(a.first?.description, "Delivery notes")
+    }
+
     func testCustomTitleWinsOverAITitle() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("csm-t-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

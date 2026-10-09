@@ -90,7 +90,8 @@ cd claude-session-manager
   Trash in one go.
 - **Session overview** — the detail pane opens on an *Overview*: the desktop
   recap (or Claude's latest reply), *Your Requests* (every prompt, newest first;
-  click one to jump to it), *Outputs* (PRs, files handed to you, files changed —
+  click one to jump to it), *Outputs* (published artifacts — open, reveal the
+  source file or copy the link — plus PRs, files handed to you, files changed,
   all clickable) and a few stats (span, tokens, context, compactions). Other
   details (session id, models, version, …) sit behind the ⓘ button.
 - **Conversation** — the *Conversation* tab reads top to bottom (opening at the
