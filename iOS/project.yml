@@ -1,0 +1,44 @@
+# iOS client for Claude Session Manager. Generate the Xcode project with
+#   ./iOS/generate.sh        (needs xcodegen: brew install xcodegen)
+name: ClaudeSessions
+options:
+  bundleIdPrefix: com.jerome.claudesessionmanager
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  ClaudeSessions:
+    type: application
+    platform: iOS
+    sources:
+      - path: ClaudeSessions
+      # Shared with the Mac host: protocol, models, Markdown, pinning.
+      - path: ../Sources/ClaudeSessionManager/Shared
+        group: Shared
+    info:
+      path: ClaudeSessions/Info.plist
+      properties:
+        CFBundleDisplayName: Claude Sessions
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        NSCameraUsageDescription: Scan the pairing code shown on your Mac.
+        NSLocalNetworkUsageDescription: Connect to Claude Session Manager on your Mac.
+        # The host uses a self-signed certificate that the app pins; this
+        # allows it for local networks and IP addresses only.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.jerome.claudesessionmanager.pair
+            CFBundleURLSchemes: [csm]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jerome.claudesessionmanager.remote
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES

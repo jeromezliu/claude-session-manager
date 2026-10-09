@@ -43,6 +43,7 @@ struct ClaudeSessionManagerApp: App {
                     await store.reload()
                     server.data = StoreRemoteDataSource(store: store, host: host)
                     remote.apply()
+                    remote.autoPairIfRequested(devices: devices)
                 }
                 // Groups / titles may have changed in Claude Desktop meanwhile.
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

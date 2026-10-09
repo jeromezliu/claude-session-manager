@@ -80,6 +80,7 @@ struct ContentView: View {
             sidebarSelection = .allSessions
             selectedSessions = [id]
         } else {
+            store.alwaysListed.insert(id)
             Task { await store.refreshQuietly() }
         }
     }

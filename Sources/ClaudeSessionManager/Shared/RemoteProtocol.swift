@@ -23,6 +23,9 @@ struct RemoteSessionInfo: Codable, Equatable, Sendable {
     var messageCount: Int
     var lastPrompt: String?
     var isRemoteHost: Bool
+    /// Folder the session ran in (the repo for a worktree) — offered as a
+    /// place to start new sessions. Optional for older hosts.
+    var folder: String? = nil
     /// The app is driving it; `phase` says what it's doing.
     var hostedPhase: SessionPhase?
     /// Open in a terminal / Claude Desktop — read-only for remote clients.

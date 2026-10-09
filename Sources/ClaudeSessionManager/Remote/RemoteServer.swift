@@ -9,6 +9,13 @@ protocol RemoteDataSource: AnyObject {
     func summary(for sessionID: String) -> SessionSummary?
     /// Fires when the list may have changed (debounced by the server).
     var sessionsChanged: AnyPublisher<Void, Never> { get }
+    /// Rescan so `sessionID`, just started remotely, is listed (even in a
+    /// temp folder).
+    func refresh(adding sessionID: String) async
+}
+
+extension RemoteDataSource {
+    func refresh(adding sessionID: String) async {}
 }
 
 /// WebSocket server for remote clients. Listens on loopback only unless
@@ -400,8 +407,17 @@ final class RemoteConnection {
             // Ack once Claude announces the session id the client will use.
             var sink: AnyCancellable?
             sink = live.$sessionID.compactMap { $0 }.first().sink { [weak self] id in
-                self?.send(.ack(id: mid, ok: true, error: nil, sessionID: id))
                 _ = sink
+                // The client subscribes right after the ack, so the session
+                // must be listed by then (its JSONL appears with the first turn).
+                Task { @MainActor [weak self] in
+                    for _ in 0..<10 {
+                        guard let data = self?.server?.data, data.summary(for: id) == nil else { break }
+                        await data.refresh(adding: id)
+                        if data.summary(for: id) == nil { try? await Task.sleep(nanoseconds: 1_000_000_000) }
+                    }
+                    self?.send(.ack(id: mid, ok: true, error: nil, sessionID: id))
+                }
             }
         } catch {
             send(.ack(id: mid, ok: false, error: error.localizedDescription, sessionID: nil))

@@ -36,6 +36,10 @@ final class SessionStore: ObservableObject {
     }
 
     /// Whether to include throwaway temp-dir sessions (analysis logs, etc.).
+    /// Sessions started from this app (here or from the phone): listed even
+    /// in a temp folder, since the user is driving them.
+    var alwaysListed: Set<String> = []
+
     @AppStorage("showTemporarySessions") var showTemporarySessions = false {
         didSet { Task { await reload() } }
     }
@@ -303,12 +307,13 @@ final class SessionStore: ObservableObject {
     private func scanAll(priority: TaskPriority) async -> Result<ScanResult, Error> {
         let root = rootURL
         let includeTemp = showTemporarySessions
+        let keep = alwaysListed
         let remoteRoots = enabledRemoteRoots()
         return await Task.detached(priority: priority) {
             defer { SummaryCache.shared.persistIfNeeded() }
             do {
                 let desktop = DesktopMetadata.shared.snapshot()
-                let local = try Self.scan(root: root, includeTemp: includeTemp, desktop: desktop)
+                let local = try Self.scan(root: root, includeTemp: includeTemp, desktop: desktop, keep: keep)
                 return .success(Self.mergingRemotes(local, remoteRoots: remoteRoots, includeTemp: includeTemp))
             } catch {
                 return .failure(error)
@@ -385,7 +390,7 @@ final class SessionStore: ObservableObject {
     /// Parse every `.jsonl` under `root` (newest first), enriched with
     /// `desktop` metadata. Temporary sessions are dropped unless `includeTemp`.
     nonisolated static func scan(root: URL, includeTemp: Bool, desktop: DesktopSnapshot = .empty,
-                                 cache: SummaryCache = .shared) throws -> ScanResult {
+                                 keep: Set<String> = [], cache: SummaryCache = .shared) throws -> ScanResult {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue else {
@@ -412,7 +417,7 @@ final class SessionStore: ObservableObject {
 
         // Parse (cached by mtime+size), then drop throwaway temp-dir sessions.
         let parsed = parseConcurrently(files, cache: cache).map { $0.enriched(with: desktop.sessions[$0.id]) }
-        let kept = includeTemp ? parsed : parsed.filter { !$0.isEphemeral }
+        let kept = includeTemp ? parsed : parsed.filter { !$0.isEphemeral || keep.contains($0.id) }
         return ScanResult(sessions: kept.sorted { $0.sortDate > $1.sortDate },
                           hidden: parsed.count - kept.count, desktop: desktop)
     }

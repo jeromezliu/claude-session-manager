@@ -32,12 +32,18 @@ final class StoreRemoteDataSource: RemoteDataSource {
                 id: s.id, title: s.title, project: s.projectName, group: store.group(of: s.id),
                 category: categoryOfSession[s.id], updatedAt: s.sortDate, messageCount: s.messageCount,
                 lastPrompt: s.lastPrompt, isRemoteHost: s.isRemote,
+                folder: s.isRemote || s.isScratch ? nil : s.groupingRoot,
                 hostedPhase: host.hosted(s.id)?.phase, busyElsewhere: blocker)
         }
     }
 
     func summary(for sessionID: String) -> SessionSummary? {
         store.sessions.first { $0.id == sessionID }
+    }
+
+    func refresh(adding sessionID: String) async {
+        store.alwaysListed.insert(sessionID)
+        await store.refreshQuietly()
     }
 
     var sessionsChanged: AnyPublisher<Void, Never> {

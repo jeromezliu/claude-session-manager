@@ -116,7 +116,15 @@ struct RemoteAccessSheet: View {
                                 .textSelection(.enabled)
                             Text("Single use, expires in 5 minutes. You'll be asked to approve the device here.")
                                 .font(.caption).foregroundStyle(.secondary)
-                            Button("Cancel Pairing") { devices.cancelPairing() }
+                            HStack {
+                                if let url = remote.pairingURL(code: code) {
+                                    Button("Copy Pairing Link") {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(url, forType: .string)
+                                    }
+                                }
+                                Button("Cancel Pairing") { devices.cancelPairing() }
+                            }
                         }
                     }
                 } else {

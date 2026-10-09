@@ -108,7 +108,8 @@ final class RemoteAccessController: ObservableObject {
     private var runningSink: AnyCancellable?
     private(set) var tls: TLSIdentity?
 
-    init(server: RemoteServer, port: UInt16 = 8473) {
+    init(server: RemoteServer,
+         port: UInt16 = UInt16(ProcessInfo.processInfo.environment["CSM_REMOTE_PORT"] ?? "") ?? 8473) {
         self.server = server
         self.port = port
         enabled = defaults.bool(forKey: "remoteAccessEnabled")
@@ -133,7 +134,13 @@ final class RemoteAccessController: ObservableObject {
         if enabled {
             guard !server.isRunning else { return updatePower() }
             do {
-                if tls == nil { tls = try TLSIdentity.loadOrCreate() }
+                if tls == nil {
+                    // Dev runs (CSM_SUPPORT_DIR) get their own identity so they
+                    // never replace the one paired phones have pinned.
+                    let dev = ProcessInfo.processInfo.environment["CSM_SUPPORT_DIR"] != nil
+                    tls = try TLSIdentity.loadOrCreate(keychainAccount: dev ? "csm-tls-identity-dev"
+                                                                            : TLSIdentity.defaultKeychainAccount)
+                }
                 tlsError = nil
                 server.tls = tls
                 server.exposeOnNetwork = scope == .network
@@ -175,6 +182,24 @@ final class RemoteAccessController: ObservableObject {
                         URLQueryItem(name: "fp", value: tls.fingerprint),
                         URLQueryItem(name: "code", value: code)]
         return c.string
+    }
+
+    /// Dev-only: `CSM_REMOTE_AUTOPAIR=<file>` turns remote access on (this Mac
+    /// only, no approval prompt), starts pairing and writes the pairing link
+    /// to the file, so a simulator can pair without anyone clicking.
+    func autoPairIfRequested(devices: DeviceStore) {
+        guard let out = ProcessInfo.processInfo.environment["CSM_REMOTE_AUTOPAIR"], !out.isEmpty,
+              ProcessInfo.processInfo.environment["CSM_SUPPORT_DIR"] != nil else { return }
+        server.requiresPairingApproval = false
+        scope = .thisMac
+        enabled = true
+        apply()
+        let code = devices.beginPairing()
+        // The listener reports its port asynchronously.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let url = self?.pairingURL(code: code) else { return }
+            try? url.write(toFile: out, atomically: true, encoding: .utf8)
+        }
     }
 
     private func restart() {

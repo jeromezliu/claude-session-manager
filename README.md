@@ -128,7 +128,7 @@ cd claude-session-manager
   the session still resumes correctly.
 - **Auto-refresh** — the list and open transcript update live as sessions change
   on disk; no need to relaunch.
-- **Remote access (for the upcoming phone app)** — ⋯ → *Remote Access…* turns
+- **Remote access (for the phone app)** — ⋯ → *Remote Access…* turns
   on a WebSocket server (TLS with a self-signed certificate made on first use;
   clients pin its fingerprint). Reach is *This Mac only* or *Local network /
   VPN*, optionally limited to chosen interfaces; connections from public
@@ -139,6 +139,15 @@ cd claude-session-manager
   activity is logged; the Mac is kept awake while it's on; a menu bar icon
   shows who's connected and turns it off. Remote clients can't use
   bypass-permissions mode.
+- **Phone app (`iOS/`, demo)** — *Claude Sessions* for iPhone/iPad: pair by
+  scanning the QR code (or pasting the link from *Copy Pairing Link*), then
+  browse sessions grouped as on the Mac, read conversations, start a session
+  in any folder, send follow-ups, answer approvals / questions / plans, stop a
+  turn and switch permission mode. Sessions open in Claude Desktop or the
+  Mac's terminal are read-only from the phone. Build it with
+  `./iOS/generate.sh` (needs [xcodegen](https://github.com/yonaskolb/XcodeGen))
+  and open `iOS/ClaudeSessions.xcodeproj`; it shares the protocol and models
+  in `Sources/ClaudeSessionManager/Shared/` with the Mac app.
 - **Version** — the running version is shown at the bottom of the ⋯ menu (and
   in *About*); local builds read e.g. `1.3.0+2.c982008` (2 commits past v1.3.0).
 - **Hides temp sessions** — throwaway sessions tools spawn in `$TMPDIR` (e.g.
@@ -177,6 +186,10 @@ Sources/ClaudeSessionManager/
   Util/      SessionActions, Formatters, FileWatcher, DirectoryWatcher, RemoteShell
   Views/     ContentView (2-pane split), SessionRow, TranscriptView,
              TerminalViews, RenameSheet, RemoteHostViews
+  Remote/    SessionHost / HostedSession (headless claude), RemoteServer (WebSocket
+             + TLS + pairing), DeviceStore, RemoteAccessController
+  Shared/    protocol, host models and views also compiled into the iOS app
+iOS/         Claude Sessions phone app (xcodegen project.yml + SwiftUI sources)
 Icon/        GenerateIcon.swift (CoreGraphics app-icon generator)
 docs/        make-screenshot.swift (README screenshot renderer)
 ```
