@@ -12,8 +12,11 @@ struct ContentView: View {
     @State var showNewSkill = false
     @State var removeSkillTarget: SkillInfo?
     @State var selectedTrash: TrashEntry.ID?
-    /// Section ids (groups / projects) the user collapsed.
-    @State var collapsedSections: Set<String> = []
+    /// Sidebar rows/sections (categories, groups, projects) the user
+    /// collapsed, newline-separated ids — remembered across launches.
+    @AppStorage("collapsedSidebarSections") var collapsedSidebarRaw = ""
+    /// Row currently under a drag, for the drop highlight.
+    @State var dropTargetID: String?
     /// Pending "New Group…" / "Rename Group…" sheet.
     @State var groupSheet: GroupSheetRequest?
     @State var renameTarget: SessionSummary?
