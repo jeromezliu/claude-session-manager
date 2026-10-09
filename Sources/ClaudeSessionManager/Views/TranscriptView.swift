@@ -130,13 +130,16 @@ struct TranscriptView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .controlSize(.small)
-            if tab == .conversation {
-                Button { showNotes.toggle() } label: {
-                    Image(systemName: showNotes ? "eye" : "eye.slash")
-                }
-                .buttonStyle(.borderless)
-                .help(showNotes ? "Hide attachments & system events" : "Show attachments & system events")
+            // Always laid out (just hidden on Overview) so switching tabs
+            // doesn't shift the controls.
+            Button { showNotes.toggle() } label: {
+                Image(systemName: showNotes ? "eye" : "eye.slash")
             }
+            .buttonStyle(.borderless)
+            .help(showNotes ? "Hide attachments & system events" : "Show attachments & system events")
+            .opacity(tab == .conversation ? 1 : 0)
+            .disabled(tab != .conversation)
+            .accessibilityHidden(tab != .conversation)
             Button { showInfo.toggle() } label: { Image(systemName: "info.circle") }
                 .buttonStyle(.borderless)
                 .help("Session details")
