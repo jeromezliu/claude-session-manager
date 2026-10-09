@@ -18,6 +18,18 @@ extension ContentView {
                 NameSheet(title: "Rename Group", placeholder: "Group name", initial: old) { name in
                     store.renameGroup(old, to: name)
                 }
+            case .createCategory(let sectionID):
+                NameSheet(title: "New Category",
+                          message: "A top-level folder for groups and projects.",
+                          placeholder: "Category name", actionTitle: "Create") { name in
+                    if let created = store.createCategory(named: name) {
+                        store.moveSection(sectionID, toCategory: created)
+                    }
+                }
+            case .renameCategory(let old):
+                NameSheet(title: "Rename Category", placeholder: "Category name", initial: old) { name in
+                    store.renameCategory(old, to: name)
+                }
             }
         }
         .sheet(item: $renameTarget) { target in

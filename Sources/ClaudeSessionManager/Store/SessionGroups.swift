@@ -27,6 +27,24 @@ struct LocalSessionMeta: Codable, Equatable {
     var assignments: [String: String] = [:]
     /// Session id → title set by Rename (wins over the desktop title).
     var titles: [String: String] = [:]
+    /// Top-level categories, in creation order. A category holds groups and
+    /// projects (by `SessionSection.id`), not individual sessions.
+    var categories: [String] = []
+    /// `SessionSection.id` → category name.
+    var categoryOfSection: [String: String] = [:]
+
+    init() {}
+
+    /// Tolerates files written before a field existed (missing keys → empty),
+    /// so upgrading never discards the user's groups.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        groups = try c.decodeIfPresent([String].self, forKey: .groups) ?? []
+        assignments = try c.decodeIfPresent([String: String].self, forKey: .assignments) ?? [:]
+        titles = try c.decodeIfPresent([String: String].self, forKey: .titles) ?? [:]
+        categories = try c.decodeIfPresent([String].self, forKey: .categories) ?? []
+        categoryOfSection = try c.decodeIfPresent([String: String].self, forKey: .categoryOfSection) ?? [:]
+    }
 
     static var fileURL: URL { AppPaths.support.appendingPathComponent("session-meta.json") }
 
@@ -64,6 +82,28 @@ struct SessionSection: Identifiable, Hashable {
     var groupName: String? {
         if case .group = kind { return name }
         return nil
+    }
+}
+
+/// A top-level category and the groups/projects filed under it.
+struct SessionCategory: Identifiable, Hashable {
+    var id: String { "category:\(name)" }
+    let name: String
+    var sections: [SessionSection]
+
+    var sessionCount: Int { sections.reduce(0) { $0 + $1.sessions.count } }
+}
+
+/// One top-level sidebar entry.
+enum SidebarItem: Identifiable, Hashable {
+    case category(SessionCategory)
+    case section(SessionSection)
+
+    var id: String {
+        switch self {
+        case .category(let c): return c.id
+        case .section(let s): return s.id
+        }
     }
 }
 
@@ -130,5 +170,25 @@ enum SessionGrouping {
                                   kind: sample.isScratch ? .scratch : .project, sessions: members)
         }
         return groupSections + projectSections
+    }
+
+    /// Nest `sections` under their categories. Categories come first, in
+    /// creation order (empty ones are left out); sections keep their order,
+    /// and uncategorized ones follow at the top level.
+    static func layout(_ sections: [SessionSection], local: LocalSessionMeta) -> [SidebarItem] {
+        var inCategory: [String: [SessionSection]] = [:]
+        var topLevel: [SessionSection] = []
+        for section in sections {
+            if let c = local.categoryOfSection[section.id], local.categories.contains(c) {
+                inCategory[c, default: []].append(section)
+            } else {
+                topLevel.append(section)
+            }
+        }
+        let categories = local.categories.compactMap { name -> SidebarItem? in
+            guard let members = inCategory[name], !members.isEmpty else { return nil }
+            return .category(SessionCategory(name: name, sections: members))
+        }
+        return categories + topLevel.map { .section($0) }
     }
 }

@@ -67,6 +67,10 @@ cd claude-session-manager
   any session(s) → *Move to Group* to file it under a desktop group or a new
   group of your own; groups created here can be renamed or deleted from their
   header's context menu, and a local assignment overrides the desktop's.
+- **Categories** — a top level above groups and projects: right-click a group
+  or project header → *Move to Category* → *New Category…* to file it under,
+  say, *Work* or *Home*. Categories collapse like sections and apply in both
+  the by-group and by-project layouts.
 - **Tidy desktop sessions** — desktop sessions use the desktop app's titles;
   worktree sessions (`<repo>/.claude/worktrees/<name>`) are listed under their
   repository; folder-less "scratch" sessions share one *Scratch* section; and

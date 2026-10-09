@@ -195,11 +195,16 @@ enum GroupSheetRequest: Identifiable {
     /// Create a group and move these sessions into it.
     case create(Set<SessionSummary.ID>)
     case rename(String)
+    /// Create a category and file this section (group / project) under it.
+    case createCategory(String)
+    case renameCategory(String)
 
     var id: String {
         switch self {
         case .create(let ids): return "create:" + ids.sorted().joined(separator: ",")
         case .rename(let name): return "rename:" + name
+        case .createCategory(let section): return "create-category:" + section
+        case .renameCategory(let name): return "rename-category:" + name
         }
     }
 }

@@ -91,6 +91,10 @@ final class SessionStore: ObservableObject {
                                  local: localMeta, desktop: desktop)
     }
 
+    /// Top-level sidebar entries: categories (holding groups/projects), then
+    /// the uncategorized sections.
+    var sidebarItems: [SidebarItem] { SessionGrouping.layout(sections, local: localMeta) }
+
     /// Sessions not listed: temporary ones (when hidden) + archived ones.
     var hiddenCount: Int {
         hiddenTemporaryCount + (archivedHidden ? sessions.filter(\.isArchived).count : 0)
@@ -159,6 +163,10 @@ final class SessionStore: ObservableObject {
         var meta = localMeta
         meta.groups = meta.groups.map { $0 == old ? new : $0 }
         for (id, g) in meta.assignments where g == old { meta.assignments[id] = new }
+        // Section ids embed the group name; keep its category.
+        if let c = meta.categoryOfSection.removeValue(forKey: "group:\(old)") {
+            meta.categoryOfSection["group:\(new)"] = c
+        }
         saveMeta(meta)
     }
 
@@ -169,6 +177,55 @@ final class SessionStore: ObservableObject {
         var meta = localMeta
         meta.groups.removeAll { $0 == name }
         meta.assignments = meta.assignments.filter { $0.value != name }
+        meta.categoryOfSection["group:\(name)"] = nil
+        saveMeta(meta)
+    }
+
+    // MARK: - Categories
+
+    func category(ofSection id: String) -> String? {
+        localMeta.categoryOfSection[id].flatMap { localMeta.categories.contains($0) ? $0 : nil }
+    }
+
+    /// Create a category (or return the existing one with that name, ignoring case).
+    @discardableResult
+    func createCategory(named raw: String) -> String? {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        if let existing = localMeta.categories.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+            return existing
+        }
+        var meta = localMeta
+        meta.categories.append(name)
+        saveMeta(meta)
+        return name
+    }
+
+    /// File a group/project section under `name` (nil = back to top level).
+    func moveSection(_ sectionID: String, toCategory name: String?) {
+        var meta = localMeta
+        meta.categoryOfSection[sectionID] = name
+        saveMeta(meta)
+    }
+
+    func renameCategory(_ old: String, to raw: String) {
+        let new = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !new.isEmpty, new != old else { return }
+        guard !localMeta.categories.contains(where: { $0 != old && $0.caseInsensitiveCompare(new) == .orderedSame }) else {
+            errorMessage = "A category named “\(new)” already exists."
+            return
+        }
+        var meta = localMeta
+        meta.categories = meta.categories.map { $0 == old ? new : $0 }
+        for (id, c) in meta.categoryOfSection where c == old { meta.categoryOfSection[id] = new }
+        saveMeta(meta)
+    }
+
+    /// Delete a category; its groups and projects return to the top level.
+    func deleteCategory(_ name: String) {
+        var meta = localMeta
+        meta.categories.removeAll { $0 == name }
+        meta.categoryOfSection = meta.categoryOfSection.filter { $0.value != name }
         saveMeta(meta)
     }
 

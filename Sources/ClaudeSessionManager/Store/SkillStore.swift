@@ -71,7 +71,6 @@ final class SkillStore: ObservableObject {
 
     /// Skills from installed plugins, per ~/.claude/plugins/installed_plugins.json.
     nonisolated static func scanInstalledPlugins() -> [SkillInfo] {
-        let fm = FileManager.default
         let jsonURL = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(".claude/plugins/installed_plugins.json")
         guard let data = try? Data(contentsOf: jsonURL),

@@ -48,16 +48,28 @@ extension ContentView {
 
     private var sessionsList: some View {
         List(selection: $selectedSessions) {
-            ForEach(store.sections) { section in
-                Section {
-                    if !collapsedSections.contains(section.id) {
-                        ForEach(section.sessions) { session in
-                            SessionRow(session: session)
-                                .tag(session.id)
-                        }
+            ForEach(store.sidebarItems) { item in
+                switch item {
+                case .section(let section):
+                    Section {
+                        sessionRows(section)
+                    } header: {
+                        sectionHeader(section)
                     }
-                } header: {
-                    sectionHeader(section)
+                case .category(let category):
+                    Section {
+                        if !collapsedSections.contains(category.id) {
+                            ForEach(category.sections) { section in
+                                // A nested section's header is a plain (untagged,
+                                // so unselectable) row; its sessions sit indented below.
+                                sectionHeader(section, nested: true)
+                                sessionRows(section)
+                                    .padding(.leading, 14)
+                            }
+                        }
+                    } header: {
+                        categoryHeader(category)
+                    }
                 }
             }
         }
@@ -81,14 +93,63 @@ extension ContentView {
         }
     }
 
-    private func sectionHeader(_ section: SessionSection) -> some View {
-        let collapsed = collapsedSections.contains(section.id)
-        return Button {
-            withAnimation(.easeInOut(duration: 0.12)) {
-                if collapsed { collapsedSections.remove(section.id) }
-                else { collapsedSections.insert(section.id) }
+    @ViewBuilder
+    private func sessionRows(_ section: SessionSection) -> some View {
+        if !collapsedSections.contains(section.id) {
+            ForEach(section.sessions) { session in
+                SessionRow(session: session)
+                    .tag(session.id)
             }
-        } label: {
+        }
+    }
+
+    private func toggleCollapsed(_ id: String) {
+        withAnimation(.easeInOut(duration: 0.12)) {
+            if collapsedSections.contains(id) { collapsedSections.remove(id) }
+            else { collapsedSections.insert(id) }
+        }
+    }
+
+    private func categoryHeader(_ category: SessionCategory) -> some View {
+        let collapsed = collapsedSections.contains(category.id)
+        return Button { toggleCollapsed(category.id) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 10)
+                Image(systemName: "rectangle.stack")
+                    .foregroundStyle(.secondary)
+                Text(category.name)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(category.sessionCount)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 8)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Category · \(category.sections.count) groups/projects")
+        .contextMenu {
+            Button("Rename Category…") { groupSheet = .renameCategory(category.name) }
+            // Also reachable here (not only from each nested header) so a
+            // section can always be taken back out.
+            Menu("Remove from Category") {
+                ForEach(category.sections) { section in
+                    Button(section.name) { store.moveSection(section.id, toCategory: nil) }
+                }
+            }
+            Divider()
+            Button("Delete Category", role: .destructive) { store.deleteCategory(category.name) }
+        }
+    }
+
+    private func sectionHeader(_ section: SessionSection, nested: Bool = false) -> some View {
+        let collapsed = collapsedSections.contains(section.id)
+        return Button { toggleCollapsed(section.id) } label: {
             HStack(spacing: 6) {
                 Image(systemName: collapsed ? "chevron.right" : "chevron.down")
                     .font(.caption2)
@@ -97,6 +158,8 @@ extension ContentView {
                 Image(systemName: sectionIcon(section.kind))
                     .foregroundStyle(.secondary)
                 Text(section.name)
+                    .font(nested ? .callout.weight(.medium) : nil)
+                    .foregroundStyle(nested ? .secondary : .primary)
                     .lineLimit(1)
                 if case .project = section.kind, let host = section.sessions.first?.remoteDisplayName {
                     Label(host, systemImage: "network")
@@ -136,6 +199,8 @@ extension ContentView {
 
     @ViewBuilder
     private func sectionMenu(_ section: SessionSection) -> some View {
+        categoryMenu(for: section)
+        Divider()
         if case .group(let desktop, _) = section.kind {
             if desktop {
                 Button("Managed in Claude Desktop") {}.disabled(true)
@@ -146,6 +211,26 @@ extension ContentView {
         } else if let path = section.path {
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            }
+        }
+    }
+
+    /// "Move to Category" submenu for a group / project section.
+    private func categoryMenu(for section: SessionSection) -> some View {
+        let current = store.category(ofSection: section.id)
+        return Menu("Move to Category") {
+            ForEach(store.localMeta.categories, id: \.self) { name in
+                Button {
+                    store.moveSection(section.id, toCategory: name)
+                } label: {
+                    if name == current { Label(name, systemImage: "checkmark") } else { Text(name) }
+                }
+            }
+            if !store.localMeta.categories.isEmpty { Divider() }
+            Button("New Category…") { groupSheet = .createCategory(section.id) }
+            if current != nil {
+                Divider()
+                Button("Remove from Category") { store.moveSection(section.id, toCategory: nil) }
             }
         }
     }

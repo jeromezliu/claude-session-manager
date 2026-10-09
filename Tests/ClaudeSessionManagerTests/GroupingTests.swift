@@ -185,6 +185,39 @@ final class GroupingTests: XCTestCase {
         XCTAssertEqual(LocalSessionMeta.load(from: url.appendingPathExtension("missing")), LocalSessionMeta())
     }
 
+    // MARK: - Categories
+
+    func testOldMetaFileWithoutCategoriesStillLoads() throws {
+        let json = #"{"groups":["Mine"],"assignments":{"a":"Mine"},"titles":{}}"#
+        let meta = try JSONDecoder().decode(LocalSessionMeta.self, from: Data(json.utf8))
+        XCTAssertEqual(meta.groups, ["Mine"])
+        XCTAssertEqual(meta.assignments, ["a": "Mine"])
+        XCTAssertEqual(meta.categories, [])
+    }
+
+    func testCategoriesNestSectionsInOrder() {
+        let sessions = [
+            session("a", cwd: "/repo1", date: 4), session("b", cwd: "/repo2", date: 3),
+            session("c", cwd: "/repo3", date: 2), session("d", cwd: "/repo4", date: 1),
+        ]
+        var desktop = DesktopSnapshot()
+        desktop.groupNames = ["Baidu"]
+        desktop.groupOfSession = ["d": "Baidu"]
+        var local = LocalSessionMeta()
+        local.categories = ["Work", "Home", "Empty"]
+        local.categoryOfSection = ["project:/repo3": "Work", "group:Baidu": "Work",
+                                   "project:/repo2": "Home", "project:/gone": "Home", "project:/repo1": "Deleted"]
+        let sections = SessionGrouping.sections(for: sessions, organization: .groups, local: local, desktop: desktop)
+        let items = SessionGrouping.layout(sections, local: local)
+        XCTAssertEqual(items.map(\.id), ["category:Work", "category:Home", "project:/repo1"])
+        guard case .category(let work) = items[0] else { return XCTFail() }
+        XCTAssertEqual(work.sections.map(\.name), ["Baidu", "repo3"])   // groups first, as in sections
+        XCTAssertEqual(work.sessionCount, 2)
+        // A category that was deleted doesn't capture its old sections.
+        guard case .section(let top) = items[2] else { return XCTFail() }
+        XCTAssertEqual(top.name, "repo1")
+    }
+
     // MARK: - Formatting
 
     func testRelativeTimeNeverInFuture() {
