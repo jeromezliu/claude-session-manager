@@ -1,0 +1,12 @@
+name = "csm-relay"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+# SQLite-backed (required on the Workers Free plan); the relay stores nothing.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

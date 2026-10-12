@@ -1,0 +1,15 @@
+{
+  "name": "csm-relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy",
+    "test": "node test/relay.test.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260927.1",
+    "wrangler": "4.139.0",
+    "typescript": "5.9.3"
+  }
+}

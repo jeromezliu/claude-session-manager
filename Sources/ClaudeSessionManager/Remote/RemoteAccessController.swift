@@ -97,6 +97,12 @@ final class RemoteAccessController: ObservableObject {
         }
     }
     @Published var keepAwake: Bool { didSet { guard keepAwake != oldValue else { return }; save(); updatePower() } }
+    /// Relay server (`wss://…`) for reaching this Mac from outside the
+    /// network; empty = off.
+    @Published var relayAddress: String {
+        didSet { guard relayAddress != oldValue else { return }; save(); updateRelay() }
+    }
+    @Published private(set) var relay: RelayLink?
     @Published private(set) var tlsError: String?
     @Published private(set) var recentAudit: [AuditLog.Entry] = []
 
@@ -116,6 +122,8 @@ final class RemoteAccessController: ObservableObject {
         scope = Scope(rawValue: defaults.string(forKey: "remoteAccessScope") ?? "") ?? .thisMac
         interfaces = Set((defaults.string(forKey: "remoteAccessInterfaces") ?? "").split(separator: ",").map(String.init))
         keepAwake = defaults.object(forKey: "remoteAccessKeepAwake") as? Bool ?? true
+        relayAddress = ProcessInfo.processInfo.environment["CSM_REMOTE_RELAY"]
+            ?? defaults.string(forKey: "remoteAccessRelay") ?? ""
         server.allowedInterfaces = interfaces.isEmpty ? nil : interfaces
         server.onAudit = { [weak self] device, action, detail in
             self?.audit.append(device: device, action: action, detail: detail)
@@ -125,7 +133,7 @@ final class RemoteAccessController: ObservableObject {
         // The listener comes up asynchronously; hold the power assertion
         // exactly while it's actually running.
         runningSink = server.$isRunning.removeDuplicates().sink { [weak self] _ in
-            DispatchQueue.main.async { self?.updatePower() }
+            DispatchQueue.main.async { self?.updatePower(); self?.updateRelay() }
         }
     }
 
@@ -154,6 +162,7 @@ final class RemoteAccessController: ObservableObject {
             server.audit(nil, "remote access off")
         }
         updatePower()
+        updateRelay()
     }
 
     /// Kill switch: off now, and stays off.
@@ -181,6 +190,10 @@ final class RemoteAccessController: ObservableObject {
                         URLQueryItem(name: "port", value: String(server.port ?? port)),
                         URLQueryItem(name: "fp", value: tls.fingerprint),
                         URLQueryItem(name: "code", value: code)]
+        if let relay {
+            c.queryItems! += [URLQueryItem(name: "relay", value: relay.endpoint.url.absoluteString),
+                              URLQueryItem(name: "room", value: relay.endpoint.room)]
+        }
         return c.string
     }
 
@@ -202,6 +215,35 @@ final class RemoteAccessController: ObservableObject {
         }
     }
 
+    /// Run the relay link while remote access is on and a relay is set.
+    private func updateRelay() {
+        let url = RelayEndpoint.parse(relayAddress)
+        guard enabled, server.isRunning, let url else {
+            relay?.stop()
+            relay = nil
+            return
+        }
+        if relay?.endpoint.url == url { return }
+        relay?.stop()
+        let secret = Self.relaySecret()
+        let link = RelayLink(endpoint: RelayEndpoint(url: url, room: RelayEndpoint.room(forSecret: secret)),
+                             secret: secret, localPort: server.port ?? port)
+        relay = link
+        link.start()
+        server.audit(nil, "relay on", url.host ?? "")
+    }
+
+    /// The Mac's relay key, made on first use. Whoever holds it can claim this
+    /// Mac's room on the relay; dev runs (CSM_SUPPORT_DIR) get their own.
+    private static func relaySecret() -> String {
+        let account = ProcessInfo.processInfo.environment["CSM_SUPPORT_DIR"] != nil
+            ? "csm-relay-secret-dev" : "csm-relay-secret"
+        if let s = SSHKeychain.password(for: account) { return s }
+        let s = DeviceStore.randomToken()
+        SSHKeychain.setPassword(s, for: account)
+        return s
+    }
+
     private func restart() {
         guard enabled else { return }
         server.stop()
@@ -213,6 +255,9 @@ final class RemoteAccessController: ObservableObject {
         defaults.set(scope.rawValue, forKey: "remoteAccessScope")
         defaults.set(interfaces.sorted().joined(separator: ","), forKey: "remoteAccessInterfaces")
         defaults.set(keepAwake, forKey: "remoteAccessKeepAwake")
+        if ProcessInfo.processInfo.environment["CSM_REMOTE_RELAY"] == nil {
+            defaults.set(relayAddress, forKey: "remoteAccessRelay")
+        }
     }
 
     /// Keep the Mac from idle-sleeping while remote access is on (the display

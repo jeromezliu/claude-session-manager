@@ -166,7 +166,9 @@ struct SettingsView: View {
                     SwiftUI.Section("Mac") {
                         LabeledContent("Name", value: client.hostName ?? host.name)
                         LabeledContent("Status", value: statusText)
-                        LabeledContent("Addresses", value: host.addresses.joined(separator: ", "))
+                        if let route = client.routeLabel { LabeledContent("Connected via", value: route) }
+                        LabeledContent("Addresses", value: host.addresses.isEmpty ? "—" : host.addresses.joined(separator: ", "))
+                        if let relay = host.relay { LabeledContent("Relay", value: relay.url.host ?? relay.url.absoluteString) }
                         LabeledContent("Port", value: String(host.port))
                         LabeledContent("Security code", value: host.securityCode)
                     }

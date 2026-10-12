@@ -16,6 +16,7 @@ struct RemoteAccessSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 header
                 reach
+                relaySection
                 pairing
                 pairedDevices
                 activity
@@ -99,6 +100,37 @@ struct RemoteAccessSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(4)
         }
+    }
+
+    @State private var relayDraft = ""
+
+    private var relaySection: some View {
+        GroupBox("From anywhere (relay)") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    TextField("wss://relay.example.com", text: $relayDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.callout.monospaced())
+                        .onSubmit { remote.relayAddress = relayDraft }
+                    Button(remote.relayAddress.isEmpty ? "Use" : "Update") { remote.relayAddress = relayDraft }
+                        .disabled(relayDraft == remote.relayAddress
+                                  || (!relayDraft.isEmpty && RelayEndpoint.parse(relayDraft) == nil))
+                    if !remote.relayAddress.isEmpty {
+                        Button("Turn Off") { relayDraft = ""; remote.relayAddress = "" }
+                    }
+                }
+                if let relay = remote.relay {
+                    RelayStatusLine(relay: relay)
+                } else {
+                    Text("Both the Mac and the phone dial out to the relay, so the phone can connect from any network. It only passes encrypted bytes; pairing, the certificate check and device tokens work as usual. Pair again after turning it on.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
+        }
+        .onAppear { relayDraft = remote.relayAddress }
     }
 
     private var pairing: some View {
@@ -213,5 +245,28 @@ struct RemoteMenuBarContent: View {
         }
         Divider()
         Button("Turn Off Remote Access") { remote.turnOff() }
+    }
+}
+
+private struct RelayStatusLine: View {
+    @ObservedObject var relay: RelayLink
+
+    var body: some View {
+        HStack(spacing: 8) {
+            switch relay.state {
+            case .online:
+                Circle().fill(Color.green).frame(width: 8, height: 8)
+                Text("Connected to \(relay.endpoint.url.host ?? "relay")")
+            case .connecting:
+                ProgressView().controlSize(.small)
+                Text("Connecting to the relay…")
+            case .failed(let m):
+                Circle().fill(Color.orange).frame(width: 8, height: 8)
+                Text(m).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer()
+            if relay.connections > 0 { Text("\(relay.connections) via relay").foregroundStyle(.secondary) }
+        }
+        .font(.callout)
     }
 }

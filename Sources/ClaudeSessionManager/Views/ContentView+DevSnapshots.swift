@@ -62,6 +62,18 @@ extension ContentView {
         }
     }
 
+    /// Dev-only: open the Remote Access sheet and snapshot it.
+    func maybeRemoteAccessSnapshot() {
+        guard let path = ProcessInfo.processInfo.environment["CSM_REMOTE_SNAP"], !path.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            showRemoteAccess = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                SelfSnapshot.captureKeyWindow(to: URL(fileURLWithPath: path))
+                if ProcessInfo.processInfo.environment["CSM_SNAPSHOT_QUIT"] == "1" { NSApp.terminate(nil) }
+            }
+        }
+    }
+
     /// Dev-only: open the Skills tab, select the first skill, and snapshot.
     func maybeSkillsSnapshot() {
         guard let path = ProcessInfo.processInfo.environment["CSM_SKILLS_SNAP"], !path.isEmpty else { return }

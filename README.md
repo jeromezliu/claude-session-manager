@@ -138,7 +138,9 @@ cd claude-session-manager
   a 256-bit token (only its hash is stored) and can be revoked. Remote
   activity is logged; the Mac is kept awake while it's on; a menu bar icon
   shows who's connected and turns it off. Remote clients can't use
-  bypass-permissions mode.
+  bypass-permissions mode. **From anywhere:** set a relay (`relay/`, a small
+  Cloudflare Worker) and the phone reaches the Mac from any network — both
+  dial out over HTTPS, and the relay only passes the app's own pinned TLS.
 - **Phone app (`iOS/`, demo)** — *Claude Sessions* for iPhone/iPad: pair by
   scanning the QR code (or pasting the link from *Copy Pairing Link*), then
   browse sessions grouped as on the Mac, read conversations, start a session
@@ -190,6 +192,7 @@ Sources/ClaudeSessionManager/
              + TLS + pairing), DeviceStore, RemoteAccessController
   Shared/    protocol, host models and views also compiled into the iOS app
 iOS/         Claude Sessions phone app (xcodegen project.yml + SwiftUI sources)
+relay/       Cloudflare Worker relay for reaching the Mac from anywhere
 Icon/        GenerateIcon.swift (CoreGraphics app-icon generator)
 docs/        make-screenshot.swift (README screenshot renderer)
 ```

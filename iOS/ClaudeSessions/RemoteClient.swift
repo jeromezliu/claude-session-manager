@@ -53,6 +53,35 @@ final class SessionModel: ObservableObject, Identifiable {
     }
 }
 
+/// One way to reach a Mac: straight to an address, or through its relay.
+enum Route: Equatable {
+    case direct(String, port: Int)
+    case relay(RelayEndpoint)
+
+    static func all(addresses: [String], port: Int, relay: RelayEndpoint?) -> [Route] {
+        addresses.map { .direct($0, port: port) } + (relay.map { [.relay($0)] } ?? [])
+    }
+
+    var label: String {
+        switch self {
+        case .direct(let a, _): return a
+        case .relay(let e): return "Relay (\(e.url.host ?? "?"))"
+        }
+    }
+
+    /// The WebSocket URL; for the relay, the local bridge in front of it.
+    func url() async throws -> URL {
+        let (host, port): (String, Int)
+        switch self {
+        case .direct(let a, let p): (host, port) = (a, p)
+        case .relay(let e): (host, port) = ("127.0.0.1", Int(try await RelayBridge.shared(for: e).port()))
+        }
+        let bracketed = host.contains(":") ? "[\(host)]" : host
+        guard let url = URL(string: "wss://\(bracketed):\(port)/") else { throw URLError(.badURL) }
+        return url
+    }
+}
+
 /// The phone's connection to one Mac: TLS-pinned WebSocket, auth, the
 /// session list, subscriptions and mutations (each acked by the host).
 /// Reconnects with backoff and resumes subscriptions from the last event.
@@ -65,6 +94,8 @@ final class RemoteClient: ObservableObject {
     @Published private(set) var state: State = .idle
     @Published private(set) var sessions: [RemoteSessionInfo] = []
     @Published private(set) var hostName: String?
+    /// How the current connection reaches the Mac (an address, or the relay).
+    @Published private(set) var routeLabel: String?
 
     struct AckError: LocalizedError { let message: String; var errorDescription: String? { message } }
 
@@ -79,6 +110,9 @@ final class RemoteClient: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     private var heartbeat: Task<Void, Never>?
     private var generation = 0
+    /// Route that last worked; tried first next time.
+    private var preferredRoute = 0
+    private var attemptRoute: Route?
 
     func model(_ id: String) -> SessionModel {
         if let m = models[id] { return m }
@@ -113,32 +147,50 @@ final class RemoteClient: ObservableObject {
         open()
     }
 
-    private func open(addressIndex: Int = 0) {
+    private var routes: [Route] {
+        guard let host else { return [] }
+        return Route.all(addresses: host.addresses, port: host.port, relay: host.relay)
+    }
+
+    /// Try route `attempt` (counting from the preferred one); on failure
+    /// `connectionLost` moves on to the next before backing off.
+    private func open(attempt: Int = 0) {
         guard let host, let token else { return }
         reconnectTask?.cancel(); reconnectTask = nil
         heartbeat?.cancel()
         generation += 1
         let gen = generation
         task?.cancel(with: .goingAway, reason: nil)
+        task = nil
         state = .connecting
+        let list = routes
+        guard !list.isEmpty else { return }
+        let route = list[(preferredRoute + attempt) % list.count]
+        attemptRoute = route
 
-        let address = host.addresses[addressIndex % host.addresses.count]
-        let session = URLSession(configuration: .ephemeral, delegate: PinnedTLSDelegate(fingerprint: host.fingerprint),
-                                 delegateQueue: nil)
-        urlSession = session
-        let bracketed = address.contains(":") ? "[\(address)]" : address
-        guard let url = URL(string: "wss://\(bracketed):\(host.port)/") else { return }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 8
-        let t = session.webSocketTask(with: request)
-        t.maximumMessageSize = Self.maxMessageSize
-        task = t
-        t.resume()
-        receive(t, gen: gen, addressIndex: addressIndex)
-        Task { try? await t.send(.string(Self.encode(.hello(protocolVersion: RemoteProtocol.version, token: token)))) }
+        Task { @MainActor in
+            let url: URL
+            do { url = try await route.url() } catch {
+                guard gen == self.generation else { return }
+                return self.connectionLost(error, attempt: attempt)
+            }
+            guard gen == self.generation else { return }
+            let session = URLSession(configuration: .ephemeral, delegate: PinnedTLSDelegate(fingerprint: host.fingerprint),
+                                     delegateQueue: nil)
+            self.urlSession = session
+            var request = URLRequest(url: url)
+            // A LAN address that isn't there should fail fast when a relay can take over.
+            if case .direct = route, list.count > 1 { request.timeoutInterval = 4 } else { request.timeoutInterval = 10 }
+            let t = session.webSocketTask(with: request)
+            t.maximumMessageSize = Self.maxMessageSize
+            self.task = t
+            t.resume()
+            self.receive(t, gen: gen, attempt: attempt)
+            Task { try? await t.send(.string(Self.encode(.hello(protocolVersion: RemoteProtocol.version, token: token)))) }
+        }
     }
 
-    private func receive(_ t: URLSessionWebSocketTask, gen: Int, addressIndex: Int) {
+    private func receive(_ t: URLSessionWebSocketTask, gen: Int, attempt: Int) {
         t.receive { [weak self] result in
             Task { @MainActor in
                 guard let self, gen == self.generation else { return }
@@ -146,25 +198,26 @@ final class RemoteClient: ObservableObject {
                 case .success(let message):
                     if case .string(let s) = message,
                        let m = try? JSONDecoder.remote.decode(ServerMessage.self, from: Data(s.utf8)) {
-                        self.handle(m)
+                        self.handle(m, attempt: attempt)
                     }
-                    self.receive(t, gen: gen, addressIndex: addressIndex)
+                    self.receive(t, gen: gen, attempt: attempt)
                 case .failure(let error):
-                    self.connectionLost(error, addressIndex: addressIndex)
+                    self.connectionLost(error, attempt: attempt)
                 }
             }
         }
     }
 
-    private func connectionLost(_ error: Error, addressIndex: Int) {
+    private func connectionLost(_ error: Error, attempt: Int) {
         heartbeat?.cancel()
         for (_, c) in acks { c.resume(returning: (false, "Connection lost", nil)) }
         acks = [:]
         if case .failed = state { return }   // the host refused us: don't hammer it
-        guard let host else { return }
-        // Try the next address right away before backing off.
-        if state == .connecting, addressIndex + 1 < host.addresses.count {
-            return open(addressIndex: addressIndex + 1)
+        guard host != nil else { return }
+        routeLabel = nil
+        // Try the next route right away before backing off.
+        if state == .connecting, attempt + 1 < routes.count {
+            return open(attempt: attempt + 1)
         }
         state = .connecting
         let delay = reconnectDelay
@@ -176,10 +229,13 @@ final class RemoteClient: ObservableObject {
         }
     }
 
-    private func handle(_ message: ServerMessage) {
+    private func handle(_ message: ServerMessage, attempt: Int) {
         switch message {
         case .welcome(_, let name, _):
             hostName = name
+            let count = max(routes.count, 1)
+            preferredRoute = (preferredRoute + attempt) % count
+            routeLabel = attemptRoute?.label
             state = .connected
             reconnectDelay = 1
             send(.listSessions)
@@ -288,17 +344,23 @@ enum Pairing {
 
     static func pair(_ link: PairingLink, deviceName: String) async throws -> (PairedHost, token: String) {
         var lastError = "Couldn't reach the Mac"
-        for address in link.addresses {
+        let routes = Route.all(addresses: link.addresses, port: link.port, relay: link.relay)
+        for route in routes {
             let session = URLSession(configuration: .ephemeral, delegate: PinnedTLSDelegate(fingerprint: link.fingerprint),
                                      delegateQueue: nil)
-            let bracketed = address.contains(":") ? "[\(address)]" : address
-            guard let url = URL(string: "wss://\(bracketed):\(link.port)/") else { continue }
+            guard let url = try? await route.url() else { continue }
             let task = session.webSocketTask(with: url)
             task.maximumMessageSize = RemoteClient.maxMessageSize
             task.resume()
             defer { task.cancel(with: .goingAway, reason: nil) }
             do {
-                try await task.send(.string(RemoteClient.encode(.pair(code: link.code, deviceName: deviceName))))
+                // Give an absent LAN address a few seconds, then move on to the relay.
+                let message = RemoteClient.encode(.pair(code: link.code, deviceName: deviceName))
+                if case .direct = route, routes.count > 1 {
+                    try await withTimeout(5, orThrow: URLError(.timedOut)) { try await task.send(.string(message)) }
+                } else {
+                    try await task.send(.string(message))
+                }
                 // The Mac user has up to two minutes to approve.
                 let reply = try await withTimeout(130) { try await task.receive() }
                 guard case .string(let s) = reply,
@@ -308,7 +370,7 @@ enum Pairing {
                 switch m {
                 case .paired(let deviceID, let token):
                     let host = PairedHost(deviceID: deviceID, name: "Mac", addresses: link.addresses,
-                                          port: link.port, fingerprint: link.fingerprint)
+                                          port: link.port, fingerprint: link.fingerprint, relay: link.relay)
                     return (host, token)
                 case .error(let text):
                     throw Failure(message: text)
@@ -324,12 +386,16 @@ enum Pairing {
         throw Failure(message: lastError)
     }
 
-    private static func withTimeout<T: Sendable>(_ seconds: TimeInterval, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+    private static func withTimeout<T: Sendable>(
+        _ seconds: TimeInterval,
+        orThrow timeoutError: Error = Failure(message: "No answer from the Mac — was the pairing approved there?"),
+        _ body: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await body() }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw Failure(message: "No answer from the Mac — was the pairing approved there?")
+                throw timeoutError
             }
             let first = try await group.next()!
             group.cancelAll()

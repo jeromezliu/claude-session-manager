@@ -32,7 +32,7 @@ enum SelfSnapshot {
         let window = NSApp.keyWindow ?? NSApp.mainWindow
             ?? NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })
         guard let window else { return }
-        captureWindow(window, to: url)
+        captureWindow(window.attachedSheet ?? window, to: url)
     }
 
     private static func capture(to url: URL) {

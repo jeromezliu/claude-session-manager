@@ -48,4 +48,20 @@ final class RemoteAccessTests: XCTestCase {
         XCTAssertTrue(v6("::ffff:192.168.1.5"))
         XCTAssertFalse(v6("2408:823c:2011:3d24:490:5d0a:cc99:4d8b"), "global IPv6 on Wi-Fi must not get in")
     }
+
+    /// Must match the relay's check (relay/src/index.ts: base64url(SHA-256(secret))).
+    func testRelayRoomMatchesTheRelay() {
+        XCTAssertEqual(RelayEndpoint.room(forSecret: "abc"), "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0")
+        XCTAssertEqual(RelayEndpoint.room(forSecret: DeviceStore.randomToken()).count, 43)
+    }
+
+    func testRelayAddressParsing() {
+        XCTAssertNotNil(RelayEndpoint.parse("wss://relay.example.com"))
+        XCTAssertNotNil(RelayEndpoint.parse(" ws://127.0.0.1:8787 "))
+        XCTAssertNil(RelayEndpoint.parse("https://relay.example.com"))
+        XCTAssertNil(RelayEndpoint.parse("relay.example.com"))
+        let e = RelayEndpoint(url: URL(string: "wss://r.example")!, room: "R")
+        XCTAssertEqual(e.dataURL("abc").absoluteString, "wss://r.example/v1/rooms/R/host/abc")
+        XCTAssertEqual(e.clientURL.absoluteString, "wss://r.example/v1/rooms/R/client")
+    }
 }

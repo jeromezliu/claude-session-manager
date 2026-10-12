@@ -12,25 +12,34 @@ struct PairedHost: Codable, Identifiable, Equatable {
     var port: Int
     /// SHA-256 of the host certificate — the only one this app accepts.
     let fingerprint: String
+    /// Reachable from anywhere through this relay, if the Mac uses one.
+    var relay: RelayEndpoint? = nil
 
     var securityCode: String { PairingSecurity.code(forFingerprint: fingerprint) }
 }
 
-/// A scanned / pasted `csm://pair?v=1&hosts=…&port=…&fp=…&code=…` link.
+/// A scanned / pasted `csm://pair?v=1&hosts=…&port=…&fp=…&code=…` link,
+/// plus `&relay=wss://…&room=…` when the Mac uses a relay.
 struct PairingLink: Equatable {
     let addresses: [String]
     let port: Int
     let fingerprint: String
     let code: String
+    let relay: RelayEndpoint?
 
     init?(_ string: String) {
         guard let c = URLComponents(string: string.trimmingCharacters(in: .whitespacesAndNewlines)),
               c.scheme == "csm", c.host == "pair" else { return nil }
         let q = Dictionary(uniqueKeysWithValues: (c.queryItems ?? []).compactMap { i in i.value.map { (i.name, $0) } })
-        guard let hosts = q["hosts"], let port = q["port"].flatMap(Int.init), let fp = q["fp"], fp.count == 64,
+        guard let port = q["port"].flatMap(Int.init), let fp = q["fp"], fp.count == 64,
               let code = q["code"], !code.isEmpty else { return nil }
-        addresses = hosts.split(separator: ",").map(String.init).filter { !$0.isEmpty }
-        guard !addresses.isEmpty else { return nil }
+        addresses = (q["hosts"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        if let url = q["relay"].flatMap(RelayEndpoint.parse), let room = q["room"], room.count == 43 {
+            relay = RelayEndpoint(url: url, room: room)
+        } else {
+            relay = nil
+        }
+        guard !addresses.isEmpty || relay != nil else { return nil }
         self.port = port
         fingerprint = fp.lowercased()
         self.code = code

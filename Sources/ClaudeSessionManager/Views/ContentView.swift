@@ -70,7 +70,7 @@ struct ContentView: View {
             // the detail keeps showing the (still-running) terminal.
             if let newID, activeNewTerminal != nil { activeNewTerminal = newID }
         }
-        .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot(); maybeSkillsSnapshot(); maybeChatSnapshot() }
+        .onAppear { maybeTerminalSnapshot(); maybeNewSessionSnapshot(); maybeSkillsSnapshot(); maybeChatSnapshot(); maybeRemoteAccessSnapshot() }
     }
 
     private func adoptStartedChat() {
