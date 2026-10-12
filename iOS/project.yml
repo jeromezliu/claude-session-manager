@@ -41,4 +41,5 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.jerome.claudesessionmanager.remote
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ${CSM_TEAM_ID}   # set by generate.sh
         ENABLE_PREVIEWS: YES
