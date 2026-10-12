@@ -42,9 +42,13 @@ fi
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
 echo "▶ Building ${FULL_VERSION} ($CONFIG)…"
-swift build -c "$CONFIG"
+# SwiftPM's newer swiftbuild backend (default from Xcode 27) also compiles
+# SwiftTerm's Metal shaders, which needs Xcode's separately downloaded Metal
+# Toolchain; the native backend builds the app as it always has.
+SWIFT_BUILD=(swift build --build-system native -c "$CONFIG")
+"${SWIFT_BUILD[@]}"
 
-BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)"
+BIN_PATH="$("${SWIFT_BUILD[@]}" --show-bin-path)"
 APP_DIR="build/${APP_NAME}.app"
 MACOS_DIR="${APP_DIR}/Contents/MacOS"
 RES_DIR="${APP_DIR}/Contents/Resources"
